@@ -43,6 +43,7 @@ func NewEngine(opts ...Option) (*Engine, error) {
 		EventStore:     cfg.eventStore,
 		InstanceStore:  cfg.instanceStore,
 		TaskStore:      cfg.taskStore,
+		ChildStore:     cfg.childStore,
 		ActivityStore:  cfg.activityStore,
 		TxProvider:     cfg.txProvider,
 		EventBus:       cfg.eventBus,
@@ -88,4 +89,9 @@ func (e *Engine) Signal(ctx context.Context, input types.SignalInput) (*types.Tr
 // CompleteTask completes a pending task and fires the matching OnTaskCompleted transition.
 func (e *Engine) CompleteTask(ctx context.Context, taskID, choice, actorID string) (*types.TransitionResult, error) {
 	return e.inner.CompleteTask(ctx, taskID, choice, actorID)
+}
+
+// ChildCompleted notifies the parent workflow that a child has reached a terminal state.
+func (e *Engine) ChildCompleted(ctx context.Context, childAggregateType, childAggregateID, terminalState string) (*types.TransitionResult, error) {
+	return e.inner.ChildCompleted(ctx, childAggregateType, childAggregateID, terminalState)
 }

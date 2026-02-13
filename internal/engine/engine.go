@@ -15,6 +15,7 @@ import (
 type Deps struct {
 	EventStore     EventStore
 	InstanceStore  InstanceStore
+	TaskStore      TaskStore
 	ActivityStore  ActivityStore
 	TxProvider     TxProvider
 	EventBus       EventBus
@@ -30,6 +31,8 @@ type Deps struct {
 	ErrNoMatchingSignal  error
 	ErrSignalAmbiguous   error
 	ErrNoMatchingRoute   error
+	ErrTaskNotFound      error
+	ErrInvalidChoice     error
 }
 
 // EventStore interface (mirrors root, avoids import cycle).
@@ -57,6 +60,14 @@ type TxProvider interface {
 // EventBus interface.
 type EventBus interface {
 	Emit(ctx context.Context, event types.DomainEvent) error
+}
+
+// TaskStore interface.
+type TaskStore interface {
+	Create(ctx context.Context, tx any, task types.PendingTask) error
+	Get(ctx context.Context, taskID string) (*types.PendingTask, error)
+	GetByAggregate(ctx context.Context, aggregateType, aggregateID string) ([]types.PendingTask, error)
+	Complete(ctx context.Context, tx any, taskID, choice, actorID string) error
 }
 
 // ActivityStore interface.
@@ -247,7 +258,31 @@ func (e *Engine) Transition(
 		}
 	}
 
-	// 13. Build result
+	// 13. Post-commit: create pending task if EmitTask defined
+	var taskCreated *types.PendingTask
+	if tr.TaskDef != nil && e.deps.TaskStore != nil {
+		task := types.PendingTask{
+			ID:            generateID(),
+			WorkflowType:  def.WorkflowType,
+			AggregateType: aggregateType,
+			AggregateID:   aggregateID,
+			CorrelationID: instance.CorrelationID,
+			TaskType:      tr.TaskDef.Type,
+			Description:   tr.TaskDef.Description,
+			Options:       tr.TaskDef.Options,
+			Status:        types.TaskStatusPending,
+			Timeout:       tr.TaskDef.Timeout,
+			CreatedAt:     now,
+		}
+		if tr.TaskDef.Timeout > 0 {
+			expiresAt := now.Add(tr.TaskDef.Timeout)
+			task.ExpiresAt = expiresAt
+		}
+		_ = e.deps.TaskStore.Create(ctx, nil, task)
+		taskCreated = &task
+	}
+
+	// 14. Build result
 	isTerminal := false
 	if st, exists := def.States[targetState]; exists && st.IsTerminal {
 		isTerminal = true
@@ -260,10 +295,11 @@ func (e *Engine) Transition(
 		NewState:             targetState,
 		TransitionName:       transitionName,
 		ActivitiesDispatched: activitiesDispatched,
+		TaskCreated:          taskCreated,
 		IsTerminal:           isTerminal,
 	}
 
-	// 13. Post-commit: hooks
+	// 15. Post-commit: hooks
 	duration := e.deps.Clock.Now().Sub(start)
 	e.deps.Hooks.OnTransition(ctx, *result, duration)
 
@@ -312,6 +348,76 @@ func (e *Engine) Signal(ctx context.Context, input types.SignalInput) (*types.Tr
 
 	// Execute the matched transition
 	return e.Transition(ctx, input.TargetAggregateType, input.TargetAggregateID, matches[0], input.ActorID, input.Payload)
+}
+
+// CompleteTask completes a pending task and fires the matching OnTaskCompleted transition.
+// The choice determines which transition fires when multiple OnTaskCompleted transitions exist.
+func (e *Engine) CompleteTask(ctx context.Context, taskID, choice, actorID string) (*types.TransitionResult, error) {
+	if e.deps.TaskStore == nil {
+		return nil, fmt.Errorf("flowstate: TaskStore not configured")
+	}
+
+	// Get the task
+	task, err := e.deps.TaskStore.Get(ctx, taskID)
+	if err != nil {
+		return nil, fmt.Errorf("flowstate: get task: %w", err)
+	}
+
+	// Look up definition
+	def, ok := e.definitions[task.AggregateType]
+	if !ok {
+		return nil, fmt.Errorf("flowstate: no workflow registered for aggregate type %q", task.AggregateType)
+	}
+
+	// Load instance
+	instance, err := e.deps.InstanceStore.Get(ctx, task.AggregateType, task.AggregateID)
+	if err != nil {
+		return nil, fmt.Errorf("flowstate: get instance: %w", err)
+	}
+
+	// Find matching OnTaskCompleted transitions from current state
+	var matches []string
+	for name, tr := range def.Transitions {
+		if tr.TriggerType == types.TriggerTaskCompleted && tr.TriggerKey == task.TaskType {
+			if containsSource(tr.Sources, instance.CurrentState) {
+				matches = append(matches, name)
+			}
+		}
+	}
+
+	if len(matches) == 0 {
+		return nil, fmt.Errorf("flowstate: no transition matches task completion for type %q: %w",
+			task.TaskType, e.deps.ErrNoMatchingSignal)
+	}
+
+	// If multiple matches, use choice to disambiguate
+	transitionName := matches[0]
+	if len(matches) > 1 {
+		found := false
+		for _, name := range matches {
+			// Match by transition name containing the choice
+			if name == choice {
+				transitionName = name
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil, fmt.Errorf("flowstate: choice %q does not match any transition: %w",
+				choice, e.deps.ErrInvalidChoice)
+		}
+	}
+
+	// Complete the task in store
+	if err := e.deps.TaskStore.Complete(ctx, nil, taskID, choice, actorID); err != nil {
+		return nil, fmt.Errorf("flowstate: complete task in store: %w", err)
+	}
+
+	// Execute the matched transition
+	return e.Transition(ctx, task.AggregateType, task.AggregateID, transitionName, actorID, map[string]any{
+		"_task_id":     taskID,
+		"_task_choice": choice,
+	})
 }
 
 func (e *Engine) loadOrCreate(

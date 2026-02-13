@@ -42,6 +42,7 @@ func NewEngine(opts ...Option) (*Engine, error) {
 	deps := internalengine.Deps{
 		EventStore:     cfg.eventStore,
 		InstanceStore:  cfg.instanceStore,
+		TaskStore:      cfg.taskStore,
 		ActivityStore:  cfg.activityStore,
 		TxProvider:     cfg.txProvider,
 		EventBus:       cfg.eventBus,
@@ -56,6 +57,8 @@ func NewEngine(opts ...Option) (*Engine, error) {
 		ErrNoMatchingSignal:  ErrNoMatchingSignal,
 		ErrSignalAmbiguous:   ErrSignalAmbiguous,
 		ErrNoMatchingRoute:   ErrNoMatchingRoute,
+		ErrTaskNotFound:      ErrTaskNotFound,
+		ErrInvalidChoice:     ErrInvalidChoice,
 	}
 
 	return &Engine{inner: internalengine.New(deps)}, nil
@@ -80,4 +83,9 @@ func (e *Engine) Transition(
 // Signal sends a signal to trigger a matching OnSignal transition.
 func (e *Engine) Signal(ctx context.Context, input types.SignalInput) (*types.TransitionResult, error) {
 	return e.inner.Signal(ctx, input)
+}
+
+// CompleteTask completes a pending task and fires the matching OnTaskCompleted transition.
+func (e *Engine) CompleteTask(ctx context.Context, taskID, choice, actorID string) (*types.TransitionResult, error) {
+	return e.inner.CompleteTask(ctx, taskID, choice, actorID)
 }

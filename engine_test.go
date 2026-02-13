@@ -556,6 +556,157 @@ func TestEngineSignalNoMatch(t *testing.T) {
 	}
 }
 
+// --- Wait State / Task tests ---
+
+func newTestHarnessWithTasks(t *testing.T) (*testHarness, *memstore.TaskStore) {
+	t.Helper()
+	es := memstore.NewEventStore()
+	is := memstore.NewInstanceStore()
+	ts := memstore.NewTaskStore()
+	engine, err := flowstate.NewEngine(
+		flowstate.WithEventStore(es),
+		flowstate.WithInstanceStore(is),
+		flowstate.WithTaskStore(ts),
+		flowstate.WithTxProvider(memstore.NewTxProvider()),
+		flowstate.WithEventBus(chanbus.New()),
+		flowstate.WithClock(flowstate.RealClock{}),
+		flowstate.WithHooks(flowstate.NoopHooks{}),
+	)
+	if err != nil {
+		t.Fatalf("failed to create engine: %v", err)
+	}
+	return &testHarness{engine: engine, eventStore: es, instanceStore: is}, ts
+}
+
+func TestEngineWaitStateAndTaskCompletion(t *testing.T) {
+	def, err := flowstate.Define("approval", "review").
+		Version(1).
+		States(
+			flowstate.Initial("SUBMITTED"),
+			flowstate.WaitState("AWAITING_REVIEW"),
+			flowstate.Terminal("APPROVED"),
+			flowstate.Terminal("REJECTED"),
+		).
+		Transition("submit_for_review",
+			flowstate.From("SUBMITTED"),
+			flowstate.To("AWAITING_REVIEW"),
+			flowstate.Event("SubmittedForReview"),
+			flowstate.EmitTask(types.TaskDef{
+				Type:        "review_decision",
+				Description: "Please review and approve or reject",
+				Options:     []string{"approve", "reject"},
+			}),
+		).
+		Transition("approve",
+			flowstate.From("AWAITING_REVIEW"),
+			flowstate.To("APPROVED"),
+			flowstate.Event("Approved"),
+			flowstate.OnTaskCompleted("review_decision"),
+		).
+		Transition("reject",
+			flowstate.From("AWAITING_REVIEW"),
+			flowstate.To("REJECTED"),
+			flowstate.Event("Rejected"),
+			flowstate.OnTaskCompleted("review_decision"),
+		).
+		Build()
+	if err != nil {
+		t.Fatalf("failed to build definition: %v", err)
+	}
+
+	h, taskStore := newTestHarnessWithTasks(t)
+	h.engine.Register(def)
+	ctx := context.Background()
+
+	// Submit for review — should create a pending task
+	result, err := h.engine.Transition(ctx, "approval", "doc-1", "submit_for_review", "author", nil)
+	if err != nil {
+		t.Fatalf("submit failed: %v", err)
+	}
+	if result.NewState != "AWAITING_REVIEW" {
+		t.Errorf("expected AWAITING_REVIEW, got %s", result.NewState)
+	}
+	if result.TaskCreated == nil {
+		t.Fatal("expected a task to be created")
+	}
+
+	// Verify task in store
+	tasks, err := taskStore.GetByAggregate(ctx, "approval", "doc-1")
+	if err != nil {
+		t.Fatalf("get tasks failed: %v", err)
+	}
+	if len(tasks) != 1 {
+		t.Fatalf("expected 1 task, got %d", len(tasks))
+	}
+	if tasks[0].TaskType != "review_decision" {
+		t.Errorf("expected review_decision, got %s", tasks[0].TaskType)
+	}
+
+	// Complete the task with "approve"
+	approveResult, err := h.engine.CompleteTask(ctx, tasks[0].ID, "approve", "reviewer-1")
+	if err != nil {
+		t.Fatalf("complete task failed: %v", err)
+	}
+	if approveResult.NewState != "APPROVED" {
+		t.Errorf("expected APPROVED, got %s", approveResult.NewState)
+	}
+}
+
+func TestEngineTaskReject(t *testing.T) {
+	def, err := flowstate.Define("approval", "review").
+		Version(1).
+		States(
+			flowstate.Initial("SUBMITTED"),
+			flowstate.WaitState("AWAITING_REVIEW"),
+			flowstate.Terminal("APPROVED"),
+			flowstate.Terminal("REJECTED"),
+		).
+		Transition("submit_for_review",
+			flowstate.From("SUBMITTED"),
+			flowstate.To("AWAITING_REVIEW"),
+			flowstate.Event("SubmittedForReview"),
+			flowstate.EmitTask(types.TaskDef{
+				Type:        "review_decision",
+				Description: "Review it",
+				Options:     []string{"approve", "reject"},
+			}),
+		).
+		Transition("approve",
+			flowstate.From("AWAITING_REVIEW"),
+			flowstate.To("APPROVED"),
+			flowstate.Event("Approved"),
+			flowstate.OnTaskCompleted("review_decision"),
+		).
+		Transition("reject",
+			flowstate.From("AWAITING_REVIEW"),
+			flowstate.To("REJECTED"),
+			flowstate.Event("Rejected"),
+			flowstate.OnTaskCompleted("review_decision"),
+		).
+		Build()
+	if err != nil {
+		t.Fatalf("failed to build definition: %v", err)
+	}
+
+	h, taskStore := newTestHarnessWithTasks(t)
+	h.engine.Register(def)
+	ctx := context.Background()
+
+	_, err = h.engine.Transition(ctx, "approval", "doc-2", "submit_for_review", "author", nil)
+	if err != nil {
+		t.Fatalf("submit failed: %v", err)
+	}
+
+	tasks, _ := taskStore.GetByAggregate(ctx, "approval", "doc-2")
+	rejectResult, err := h.engine.CompleteTask(ctx, tasks[0].ID, "reject", "reviewer-1")
+	if err != nil {
+		t.Fatalf("complete task failed: %v", err)
+	}
+	if rejectResult.NewState != "REJECTED" {
+		t.Errorf("expected REJECTED, got %s", rejectResult.NewState)
+	}
+}
+
 // Ensure Guard interface from types package is compatible
 var _ types.Guard = (*alwaysFailGuard)(nil)
 var _ types.Guard = (*passingGuard)(nil)

@@ -312,6 +312,160 @@ func TestEngineEventChainByCorrelation(t *testing.T) {
 	}
 }
 
+// --- Activity tests ---
+
+type recordingActivity struct {
+	name    string
+	calls   int
+	lastCtx context.Context
+}
+
+func (a *recordingActivity) Name() string { return a.name }
+func (a *recordingActivity) Execute(ctx context.Context, _ types.ActivityInput) (*types.ActivityResult, error) {
+	a.calls++
+	a.lastCtx = ctx
+	return &types.ActivityResult{Output: map[string]any{"ok": true}}, nil
+}
+
+func newTestHarnessWithActivities(t *testing.T, activities ...flowstate.Activity) (*testHarness, *memstore.ActivityStore) {
+	t.Helper()
+	es := memstore.NewEventStore()
+	is := memstore.NewInstanceStore()
+	as := memstore.NewActivityStore()
+	runner := newRecordingRunner(activities...)
+	engine, err := flowstate.NewEngine(
+		flowstate.WithEventStore(es),
+		flowstate.WithInstanceStore(is),
+		flowstate.WithTxProvider(memstore.NewTxProvider()),
+		flowstate.WithEventBus(chanbus.New()),
+		flowstate.WithActivityStore(as),
+		flowstate.WithActivityRunner(runner),
+		flowstate.WithClock(flowstate.RealClock{}),
+		flowstate.WithHooks(flowstate.NoopHooks{}),
+	)
+	if err != nil {
+		t.Fatalf("failed to create engine: %v", err)
+	}
+	return &testHarness{engine: engine, eventStore: es, instanceStore: is}, as
+}
+
+type recordingRunner struct {
+	activities map[string]flowstate.Activity
+	dispatched []string
+}
+
+func newRecordingRunner(activities ...flowstate.Activity) *recordingRunner {
+	r := &recordingRunner{activities: make(map[string]flowstate.Activity)}
+	for _, a := range activities {
+		r.activities[a.Name()] = a
+	}
+	return r
+}
+
+func (r *recordingRunner) Dispatch(ctx context.Context, inv types.ActivityInvocation) error {
+	r.dispatched = append(r.dispatched, inv.ActivityName)
+	if a, ok := r.activities[inv.ActivityName]; ok {
+		_, err := a.Execute(ctx, inv.Input)
+		return err
+	}
+	return flowstate.ErrActivityNotRegistered
+}
+
+func TestEngineActivityDispatch(t *testing.T) {
+	act := &recordingActivity{name: "send_email"}
+	h, actStore := newTestHarnessWithActivities(t, act)
+
+	def, err := flowstate.Define("order", "with_activity").
+		Version(1).
+		States(
+			flowstate.Initial("CREATED"),
+			flowstate.Terminal("DONE"),
+		).
+		Transition("complete",
+			flowstate.From("CREATED"),
+			flowstate.To("DONE"),
+			flowstate.Event("OrderCompleted"),
+			flowstate.Dispatch("send_email"),
+		).
+		Build()
+	if err != nil {
+		t.Fatalf("failed to build definition: %v", err)
+	}
+
+	h.engine.Register(def)
+
+	ctx := context.Background()
+	result, err := h.engine.Transition(ctx, "order", "o-1", "complete", "user-1", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.NewState != "DONE" {
+		t.Errorf("expected DONE, got %s", result.NewState)
+	}
+
+	// Activity should have been dispatched
+	if len(result.ActivitiesDispatched) != 1 || result.ActivitiesDispatched[0] != "send_email" {
+		t.Errorf("expected [send_email] dispatched, got %v", result.ActivitiesDispatched)
+	}
+
+	// Activity should have been called
+	if act.calls != 1 {
+		t.Errorf("expected activity called once, got %d", act.calls)
+	}
+
+	// Activity invocation should be stored
+	invocations, err := actStore.ListByAggregate(ctx, "order", "o-1")
+	if err != nil {
+		t.Fatalf("list invocations failed: %v", err)
+	}
+	if len(invocations) != 1 {
+		t.Errorf("expected 1 invocation stored, got %d", len(invocations))
+	}
+}
+
+func TestEngineMultipleActivities(t *testing.T) {
+	act1 := &recordingActivity{name: "send_email"}
+	act2 := &recordingActivity{name: "update_crm"}
+	h, _ := newTestHarnessWithActivities(t, act1, act2)
+
+	def, err := flowstate.Define("order", "multi_act").
+		Version(1).
+		States(
+			flowstate.Initial("CREATED"),
+			flowstate.Terminal("DONE"),
+		).
+		Transition("complete",
+			flowstate.From("CREATED"),
+			flowstate.To("DONE"),
+			flowstate.Event("OrderCompleted"),
+			flowstate.Dispatch("send_email"),
+			flowstate.Dispatch("update_crm"),
+		).
+		Build()
+	if err != nil {
+		t.Fatalf("failed to build definition: %v", err)
+	}
+
+	h.engine.Register(def)
+
+	ctx := context.Background()
+	result, err := h.engine.Transition(ctx, "order", "o-1", "complete", "user-1", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(result.ActivitiesDispatched) != 2 {
+		t.Errorf("expected 2 activities dispatched, got %d", len(result.ActivitiesDispatched))
+	}
+	if act1.calls != 1 {
+		t.Errorf("expected send_email called once, got %d", act1.calls)
+	}
+	if act2.calls != 1 {
+		t.Errorf("expected update_crm called once, got %d", act2.calls)
+	}
+}
+
 // Ensure Guard interface from types package is compatible
 var _ types.Guard = (*alwaysFailGuard)(nil)
 var _ types.Guard = (*passingGuard)(nil)

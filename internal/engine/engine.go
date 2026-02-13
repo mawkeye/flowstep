@@ -13,18 +13,20 @@ import (
 // Deps holds all external dependencies injected by the root package.
 // This avoids the internal engine importing the root package.
 type Deps struct {
-	EventStore    EventStore
-	InstanceStore InstanceStore
-	TxProvider    TxProvider
-	EventBus      EventBus
-	Clock         Clock
-	Hooks         Hooks
+	EventStore     EventStore
+	InstanceStore  InstanceStore
+	ActivityStore  ActivityStore
+	TxProvider     TxProvider
+	EventBus       EventBus
+	ActivityRunner ActivityRunner
+	Clock          Clock
+	Hooks          Hooks
 
 	// Sentinel errors from root package
-	ErrInstanceNotFound       error
-	ErrInvalidTransition      error
-	ErrAlreadyTerminal        error
-	ErrGuardFailed            error
+	ErrInstanceNotFound  error
+	ErrInvalidTransition error
+	ErrAlreadyTerminal   error
+	ErrGuardFailed       error
 }
 
 // EventStore interface (mirrors root, avoids import cycle).
@@ -52,6 +54,19 @@ type TxProvider interface {
 // EventBus interface.
 type EventBus interface {
 	Emit(ctx context.Context, event types.DomainEvent) error
+}
+
+// ActivityStore interface.
+type ActivityStore interface {
+	Create(ctx context.Context, tx any, invocation types.ActivityInvocation) error
+	Get(ctx context.Context, invocationID string) (*types.ActivityInvocation, error)
+	UpdateStatus(ctx context.Context, invocationID, status string, result *types.ActivityResult) error
+	ListByAggregate(ctx context.Context, aggregateType, aggregateID string) ([]types.ActivityInvocation, error)
+}
+
+// ActivityRunner interface.
+type ActivityRunner interface {
+	Dispatch(ctx context.Context, invocation types.ActivityInvocation) error
 }
 
 // Clock interface.
@@ -187,19 +202,62 @@ func (e *Engine) Transition(
 		_ = e.deps.EventBus.Emit(ctx, event)
 	}
 
-	// 12. Build result
+	// 12. Post-commit: dispatch activities
+	var activitiesDispatched []string
+	if len(tr.Activities) > 0 && e.deps.ActivityRunner != nil {
+		for _, actDef := range tr.Activities {
+			invocation := types.ActivityInvocation{
+				ID:            generateID(),
+				ActivityName:  actDef.Name,
+				WorkflowType:  def.WorkflowType,
+				AggregateType: aggregateType,
+				AggregateID:   aggregateID,
+				CorrelationID: instance.CorrelationID,
+				Mode:          actDef.Mode,
+				Input: types.ActivityInput{
+					WorkflowType:  def.WorkflowType,
+					AggregateType: aggregateType,
+					AggregateID:   aggregateID,
+					CorrelationID: instance.CorrelationID,
+					Params:        params,
+					ScheduledAt:   now,
+				},
+				RetryPolicy: actDef.RetryPolicy,
+				Timeout:     actDef.Timeout,
+				Status:      types.ActivityStatusScheduled,
+				MaxAttempts:  1,
+				ScheduledAt: now,
+			}
+
+			if actDef.RetryPolicy != nil {
+				invocation.MaxAttempts = actDef.RetryPolicy.MaxAttempts
+			}
+
+			// Store invocation
+			if e.deps.ActivityStore != nil {
+				_ = e.deps.ActivityStore.Create(ctx, nil, invocation)
+			}
+
+			// Dispatch to runner
+			_ = e.deps.ActivityRunner.Dispatch(ctx, invocation)
+			activitiesDispatched = append(activitiesDispatched, actDef.Name)
+		}
+	}
+
+	// 13. Build result
 	isTerminal := false
 	if st, exists := def.States[targetState]; exists && st.IsTerminal {
 		isTerminal = true
 	}
 
 	result := &types.TransitionResult{
-		Instance:       *instance,
-		Event:          event,
-		PreviousState:  previousState,
-		NewState:       targetState,
-		TransitionName: transitionName,
-		IsTerminal:     isTerminal,
+		Instance:             *instance,
+		Event:                event,
+		PreviousState:        previousState,
+		NewState:             targetState,
+		TransitionName:       transitionName,
+		ActivitiesDispatched: activitiesDispatched,
+		IsTerminal:           isTerminal,
 	}
 
 	// 13. Post-commit: hooks

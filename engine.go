@@ -40,12 +40,14 @@ func NewEngine(opts ...Option) (*Engine, error) {
 	}
 
 	deps := internalengine.Deps{
-		EventStore:    cfg.eventStore,
-		InstanceStore: cfg.instanceStore,
-		TxProvider:    cfg.txProvider,
-		EventBus:      cfg.eventBus,
-		Clock:         cfg.clock,
-		Hooks:         cfg.hooks,
+		EventStore:     cfg.eventStore,
+		InstanceStore:  cfg.instanceStore,
+		ActivityStore:  cfg.activityStore,
+		TxProvider:     cfg.txProvider,
+		EventBus:       cfg.eventBus,
+		ActivityRunner: cfg.activityRunner,
+		Clock:          cfg.clock,
+		Hooks:          cfg.hooks,
 
 		ErrInstanceNotFound:  ErrInstanceNotFound,
 		ErrInvalidTransition: ErrInvalidTransition,

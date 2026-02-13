@@ -466,6 +466,96 @@ func TestEngineMultipleActivities(t *testing.T) {
 	}
 }
 
+// --- Signal tests ---
+
+func TestEngineSignalTransition(t *testing.T) {
+	def, err := flowstate.Define("order", "signal_wf").
+		Version(1).
+		States(
+			flowstate.Initial("CREATED"),
+			flowstate.State("PAYMENT_PENDING"),
+			flowstate.Terminal("PAID"),
+		).
+		Transition("start_payment",
+			flowstate.From("CREATED"),
+			flowstate.To("PAYMENT_PENDING"),
+			flowstate.Event("PaymentStarted"),
+		).
+		Transition("payment_received",
+			flowstate.From("PAYMENT_PENDING"),
+			flowstate.To("PAID"),
+			flowstate.Event("PaymentReceived"),
+			flowstate.OnSignal("payment_complete"),
+		).
+		Build()
+	if err != nil {
+		t.Fatalf("failed to build definition: %v", err)
+	}
+
+	h := newTestHarness(t)
+	h.engine.Register(def)
+
+	ctx := context.Background()
+
+	// Move to PAYMENT_PENDING
+	_, err = h.engine.Transition(ctx, "order", "o-1", "start_payment", "user-1", nil)
+	if err != nil {
+		t.Fatalf("start_payment failed: %v", err)
+	}
+
+	// Send signal
+	result, err := h.engine.Signal(ctx, types.SignalInput{
+		TargetAggregateType: "order",
+		TargetAggregateID:   "o-1",
+		SignalName:          "payment_complete",
+		ActorID:             "system",
+	})
+	if err != nil {
+		t.Fatalf("signal failed: %v", err)
+	}
+	if result.NewState != "PAID" {
+		t.Errorf("expected PAID, got %s", result.NewState)
+	}
+	if result.Event.EventType != "PaymentReceived" {
+		t.Errorf("expected PaymentReceived, got %s", result.Event.EventType)
+	}
+}
+
+func TestEngineSignalNoMatch(t *testing.T) {
+	def, err := flowstate.Define("order", "signal_wf").
+		Version(1).
+		States(
+			flowstate.Initial("CREATED"),
+			flowstate.Terminal("DONE"),
+		).
+		Transition("complete",
+			flowstate.From("CREATED"),
+			flowstate.To("DONE"),
+			flowstate.Event("Done"),
+			flowstate.OnSignal("finish"),
+		).
+		Build()
+	if err != nil {
+		t.Fatalf("failed to build definition: %v", err)
+	}
+
+	h := newTestHarness(t)
+	h.engine.Register(def)
+
+	ctx := context.Background()
+
+	// Signal with wrong name
+	_, err = h.engine.Signal(ctx, types.SignalInput{
+		TargetAggregateType: "order",
+		TargetAggregateID:   "o-1",
+		SignalName:          "wrong_signal",
+		ActorID:             "system",
+	})
+	if !errors.Is(err, flowstate.ErrNoMatchingSignal) {
+		t.Errorf("expected ErrNoMatchingSignal, got %v", err)
+	}
+}
+
 // Ensure Guard interface from types package is compatible
 var _ types.Guard = (*alwaysFailGuard)(nil)
 var _ types.Guard = (*passingGuard)(nil)

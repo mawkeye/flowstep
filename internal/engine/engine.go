@@ -27,6 +27,9 @@ type Deps struct {
 	ErrInvalidTransition error
 	ErrAlreadyTerminal   error
 	ErrGuardFailed       error
+	ErrNoMatchingSignal  error
+	ErrSignalAmbiguous   error
+	ErrNoMatchingRoute   error
 }
 
 // EventStore interface (mirrors root, avoids import cycle).
@@ -265,6 +268,50 @@ func (e *Engine) Transition(
 	e.deps.Hooks.OnTransition(ctx, *result, duration)
 
 	return result, nil
+}
+
+// Signal sends a signal to trigger a matching OnSignal transition.
+func (e *Engine) Signal(ctx context.Context, input types.SignalInput) (*types.TransitionResult, error) {
+	def, ok := e.definitions[input.TargetAggregateType]
+	if !ok {
+		return nil, fmt.Errorf("flowstate: no workflow registered for aggregate type %q", input.TargetAggregateType)
+	}
+
+	// Load instance (must exist for signals)
+	instance, err := e.deps.InstanceStore.Get(ctx, input.TargetAggregateType, input.TargetAggregateID)
+	if err != nil {
+		if errors.Is(err, e.deps.ErrInstanceNotFound) {
+			// Auto-create at initial state for signal
+			instance, err = e.loadOrCreate(ctx, def, input.TargetAggregateType, input.TargetAggregateID)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			return nil, fmt.Errorf("flowstate: get instance: %w", err)
+		}
+	}
+
+	// Find matching signal transition from current state
+	var matches []string
+	for name, tr := range def.Transitions {
+		if tr.TriggerType == types.TriggerSignal && tr.TriggerKey == input.SignalName {
+			if containsSource(tr.Sources, instance.CurrentState) {
+				matches = append(matches, name)
+			}
+		}
+	}
+
+	if len(matches) == 0 {
+		return nil, fmt.Errorf("flowstate: no transition matches signal %q from state %q: %w",
+			input.SignalName, instance.CurrentState, e.deps.ErrNoMatchingSignal)
+	}
+	if len(matches) > 1 {
+		return nil, fmt.Errorf("flowstate: multiple transitions match signal %q from state %q: %w",
+			input.SignalName, instance.CurrentState, e.deps.ErrSignalAmbiguous)
+	}
+
+	// Execute the matched transition
+	return e.Transition(ctx, input.TargetAggregateType, input.TargetAggregateID, matches[0], input.ActorID, input.Payload)
 }
 
 func (e *Engine) loadOrCreate(

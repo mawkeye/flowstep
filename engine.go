@@ -53,6 +53,9 @@ func NewEngine(opts ...Option) (*Engine, error) {
 		ErrInvalidTransition: ErrInvalidTransition,
 		ErrAlreadyTerminal:   ErrAlreadyTerminal,
 		ErrGuardFailed:       ErrGuardFailed,
+		ErrNoMatchingSignal:  ErrNoMatchingSignal,
+		ErrSignalAmbiguous:   ErrSignalAmbiguous,
+		ErrNoMatchingRoute:   ErrNoMatchingRoute,
 	}
 
 	return &Engine{inner: internalengine.New(deps)}, nil
@@ -72,4 +75,9 @@ func (e *Engine) Transition(
 	params map[string]any,
 ) (*types.TransitionResult, error) {
 	return e.inner.Transition(ctx, aggregateType, aggregateID, transitionName, actorID, params)
+}
+
+// Signal sends a signal to trigger a matching OnSignal transition.
+func (e *Engine) Signal(ctx context.Context, input types.SignalInput) (*types.TransitionResult, error) {
+	return e.inner.Signal(ctx, input)
 }

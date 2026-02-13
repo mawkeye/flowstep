@@ -808,7 +808,246 @@ func TestEngineConditionalRoutingNoMatch(t *testing.T) {
 	}
 }
 
-// Ensure Guard interface from types package is compatible
+// --- Child Workflow tests ---
+
+func newFullTestHarness(t *testing.T) (*testHarness, *memstore.ChildStore) {
+	t.Helper()
+	es := memstore.NewEventStore()
+	is := memstore.NewInstanceStore()
+	cs := memstore.NewChildStore()
+	engine, err := flowstate.NewEngine(
+		flowstate.WithEventStore(es),
+		flowstate.WithInstanceStore(is),
+		flowstate.WithChildStore(cs),
+		flowstate.WithTxProvider(memstore.NewTxProvider()),
+		flowstate.WithEventBus(chanbus.New()),
+		flowstate.WithClock(flowstate.RealClock{}),
+		flowstate.WithHooks(flowstate.NoopHooks{}),
+	)
+	if err != nil {
+		t.Fatalf("failed to create engine: %v", err)
+	}
+	return &testHarness{engine: engine, eventStore: es, instanceStore: is}, cs
+}
+
+func TestEngineSpawnChild(t *testing.T) {
+	// Parent workflow spawns a child when transitioning
+	parentDef, err := flowstate.Define("order", "parent_wf").
+		Version(1).
+		States(
+			flowstate.Initial("CREATED"),
+			flowstate.State("PROCESSING"),
+			flowstate.Terminal("DONE"),
+		).
+		Transition("start_processing",
+			flowstate.From("CREATED"),
+			flowstate.To("PROCESSING"),
+			flowstate.Event("ProcessingStarted"),
+			flowstate.SpawnChild(types.ChildDef{
+				WorkflowType: "payment",
+				InputFrom:    "order_data",
+			}),
+		).
+		Transition("processing_done",
+			flowstate.From("PROCESSING"),
+			flowstate.To("DONE"),
+			flowstate.Event("ProcessingDone"),
+			flowstate.OnChildCompleted("payment"),
+		).
+		Build()
+	if err != nil {
+		t.Fatalf("failed to build parent definition: %v", err)
+	}
+
+	childDef, err := flowstate.Define("payment", "payment_wf").
+		Version(1).
+		States(
+			flowstate.Initial("PENDING"),
+			flowstate.Terminal("COMPLETED"),
+		).
+		Transition("complete",
+			flowstate.From("PENDING"),
+			flowstate.To("COMPLETED"),
+			flowstate.Event("PaymentCompleted"),
+		).
+		Build()
+	if err != nil {
+		t.Fatalf("failed to build child definition: %v", err)
+	}
+
+	h, childStore := newFullTestHarness(t)
+	h.engine.Register(parentDef)
+	h.engine.Register(childDef)
+	ctx := context.Background()
+
+	// Start processing — should spawn child
+	result, err := h.engine.Transition(ctx, "order", "o-1", "start_processing", "user-1", nil)
+	if err != nil {
+		t.Fatalf("start_processing failed: %v", err)
+	}
+	if result.NewState != "PROCESSING" {
+		t.Errorf("expected PROCESSING, got %s", result.NewState)
+	}
+	if len(result.ChildrenSpawned) != 1 {
+		t.Fatalf("expected 1 child spawned, got %d", len(result.ChildrenSpawned))
+	}
+
+	// Verify child relation in store
+	relations, err := childStore.GetByParent(ctx, "order", "o-1")
+	if err != nil {
+		t.Fatalf("get by parent failed: %v", err)
+	}
+	if len(relations) != 1 {
+		t.Fatalf("expected 1 relation, got %d", len(relations))
+	}
+	if relations[0].ChildWorkflowType != "payment" {
+		t.Errorf("expected payment child, got %s", relations[0].ChildWorkflowType)
+	}
+
+	// Complete the child workflow
+	childAggID := relations[0].ChildAggregateID
+	_, err = h.engine.Transition(ctx, "payment", childAggID, "complete", "system", nil)
+	if err != nil {
+		t.Fatalf("child complete failed: %v", err)
+	}
+
+	// Notify parent that child completed
+	parentResult, err := h.engine.ChildCompleted(ctx, "payment", childAggID, "COMPLETED")
+	if err != nil {
+		t.Fatalf("child completed notification failed: %v", err)
+	}
+	if parentResult.NewState != "DONE" {
+		t.Errorf("expected parent DONE, got %s", parentResult.NewState)
+	}
+}
+
+func TestEngineSpawnChildren_JoinAll(t *testing.T) {
+	// Parent spawns 3 children and waits for all to complete (JoinAll)
+	parentDef, err := flowstate.Define("batch", "batch_wf").
+		Version(1).
+		States(
+			flowstate.Initial("CREATED"),
+			flowstate.State("PROCESSING"),
+			flowstate.Terminal("DONE"),
+		).
+		Transition("start_batch",
+			flowstate.From("CREATED"),
+			flowstate.To("PROCESSING"),
+			flowstate.Event("BatchStarted"),
+			flowstate.SpawnChildren(types.ChildrenDef{
+				WorkflowType: "job",
+				InputsFn: func(aggregate any) []map[string]any {
+					return []map[string]any{
+						{"job_id": "j1"},
+						{"job_id": "j2"},
+						{"job_id": "j3"},
+					}
+				},
+				Join: types.JoinAll(),
+			}),
+		).
+		Transition("batch_done",
+			flowstate.From("PROCESSING"),
+			flowstate.To("DONE"),
+			flowstate.Event("BatchDone"),
+			flowstate.OnChildrenJoined(),
+		).
+		Build()
+	if err != nil {
+		t.Fatalf("failed to build parent definition: %v", err)
+	}
+
+	childDef, err := flowstate.Define("job", "job_wf").
+		Version(1).
+		States(
+			flowstate.Initial("PENDING"),
+			flowstate.Terminal("COMPLETED"),
+		).
+		Transition("finish",
+			flowstate.From("PENDING"),
+			flowstate.To("COMPLETED"),
+			flowstate.Event("JobFinished"),
+		).
+		Build()
+	if err != nil {
+		t.Fatalf("failed to build child definition: %v", err)
+	}
+
+	h, childStore := newFullTestHarness(t)
+	h.engine.Register(parentDef)
+	h.engine.Register(childDef)
+	ctx := context.Background()
+
+	// Start batch — should spawn 3 children
+	result, err := h.engine.Transition(ctx, "batch", "b-1", "start_batch", "user-1", nil)
+	if err != nil {
+		t.Fatalf("start_batch failed: %v", err)
+	}
+	if len(result.ChildrenSpawned) != 3 {
+		t.Fatalf("expected 3 children spawned, got %d", len(result.ChildrenSpawned))
+	}
+
+	// All children should share a GroupID
+	groupID := result.ChildrenSpawned[0].GroupID
+	if groupID == "" {
+		t.Fatal("expected non-empty GroupID")
+	}
+	for i, rel := range result.ChildrenSpawned {
+		if rel.GroupID != groupID {
+			t.Errorf("child %d has different GroupID: %s vs %s", i, rel.GroupID, groupID)
+		}
+	}
+
+	// Complete first two children — parent should NOT transition yet
+	for i := 0; i < 2; i++ {
+		childAggID := result.ChildrenSpawned[i].ChildAggregateID
+		_, err = h.engine.Transition(ctx, "job", childAggID, "finish", "system", nil)
+		if err != nil {
+			t.Fatalf("child %d finish failed: %v", i, err)
+		}
+		parentResult, err := h.engine.ChildCompleted(ctx, "job", childAggID, "COMPLETED")
+		if err == nil {
+			t.Fatalf("child %d: expected join not satisfied yet, but got result: %v", i, parentResult)
+		}
+		// Should get an error indicating join not yet satisfied
+	}
+
+	// Verify parent still in PROCESSING
+	parentInst, err := h.instanceStore.Get(ctx, "batch", "b-1")
+	if err != nil {
+		t.Fatalf("get parent instance failed: %v", err)
+	}
+	if parentInst.CurrentState != "PROCESSING" {
+		t.Errorf("expected parent still PROCESSING, got %s", parentInst.CurrentState)
+	}
+
+	// Complete third child — parent should now transition to DONE
+	lastChildAggID := result.ChildrenSpawned[2].ChildAggregateID
+	_, err = h.engine.Transition(ctx, "job", lastChildAggID, "finish", "system", nil)
+	if err != nil {
+		t.Fatalf("child 2 finish failed: %v", err)
+	}
+	parentResult, err := h.engine.ChildCompleted(ctx, "job", lastChildAggID, "COMPLETED")
+	if err != nil {
+		t.Fatalf("final child completed failed: %v", err)
+	}
+	if parentResult.NewState != "DONE" {
+		t.Errorf("expected parent DONE, got %s", parentResult.NewState)
+	}
+
+	// Verify all children marked complete in store
+	relations, err := childStore.GetByGroup(ctx, groupID)
+	if err != nil {
+		t.Fatalf("get by group failed: %v", err)
+	}
+	for _, rel := range relations {
+		if rel.Status != "COMPLETED" {
+			t.Errorf("expected child %s COMPLETED, got %s", rel.ChildAggregateID, rel.Status)
+		}
+	}
+}
+
+// Ensure interfaces are compatible
 var _ types.Guard = (*alwaysFailGuard)(nil)
 var _ types.Guard = (*passingGuard)(nil)
 var _ types.Condition = (*amountCondition)(nil)

@@ -16,6 +16,7 @@ type Deps struct {
 	EventStore     EventStore
 	InstanceStore  InstanceStore
 	TaskStore      TaskStore
+	ChildStore     ChildStore
 	ActivityStore  ActivityStore
 	TxProvider     TxProvider
 	EventBus       EventBus
@@ -60,6 +61,15 @@ type TxProvider interface {
 // EventBus interface.
 type EventBus interface {
 	Emit(ctx context.Context, event types.DomainEvent) error
+}
+
+// ChildStore interface.
+type ChildStore interface {
+	Create(ctx context.Context, tx any, relation types.ChildRelation) error
+	GetByChild(ctx context.Context, childAggregateType, childAggregateID string) (*types.ChildRelation, error)
+	GetByParent(ctx context.Context, parentAggregateType, parentAggregateID string) ([]types.ChildRelation, error)
+	GetByGroup(ctx context.Context, groupID string) ([]types.ChildRelation, error)
+	Complete(ctx context.Context, tx any, childAggregateType, childAggregateID, terminalState string) error
 }
 
 // TaskStore interface.
@@ -289,7 +299,50 @@ func (e *Engine) Transition(
 		taskCreated = &task
 	}
 
-	// 14. Build result
+	// 14. Post-commit: spawn child workflow(s)
+	var childrenSpawned []types.ChildRelation
+	if tr.ChildDef != nil && e.deps.ChildStore != nil {
+		childAggID := generateID()
+		relation := types.ChildRelation{
+			ID:                  generateID(),
+			ParentWorkflowType:  def.WorkflowType,
+			ParentAggregateType: aggregateType,
+			ParentAggregateID:   aggregateID,
+			ChildWorkflowType:   tr.ChildDef.WorkflowType,
+			ChildAggregateType:  tr.ChildDef.WorkflowType,
+			ChildAggregateID:    childAggID,
+			CorrelationID:       instance.CorrelationID,
+			Status:              "ACTIVE",
+			CreatedAt:           now,
+		}
+		_ = e.deps.ChildStore.Create(ctx, nil, relation)
+		childrenSpawned = append(childrenSpawned, relation)
+	}
+	if tr.ChildrenDef != nil && e.deps.ChildStore != nil {
+		groupID := generateID()
+		inputs := tr.ChildrenDef.InputsFn(nil)
+		for range inputs {
+			childAggID := generateID()
+			relation := types.ChildRelation{
+				ID:                  generateID(),
+				GroupID:             groupID,
+				ParentWorkflowType:  def.WorkflowType,
+				ParentAggregateType: aggregateType,
+				ParentAggregateID:   aggregateID,
+				ChildWorkflowType:   tr.ChildrenDef.WorkflowType,
+				ChildAggregateType:  tr.ChildrenDef.WorkflowType,
+				ChildAggregateID:    childAggID,
+				CorrelationID:       instance.CorrelationID,
+				JoinPolicy:          tr.ChildrenDef.Join.Mode,
+				Status:              "ACTIVE",
+				CreatedAt:           now,
+			}
+			_ = e.deps.ChildStore.Create(ctx, nil, relation)
+			childrenSpawned = append(childrenSpawned, relation)
+		}
+	}
+
+	// 15. Build result
 	isTerminal := false
 	if st, exists := def.States[targetState]; exists && st.IsTerminal {
 		isTerminal = true
@@ -303,6 +356,7 @@ func (e *Engine) Transition(
 		TransitionName:       transitionName,
 		ActivitiesDispatched: activitiesDispatched,
 		TaskCreated:          taskCreated,
+		ChildrenSpawned:      childrenSpawned,
 		IsTerminal:           isTerminal,
 	}
 
@@ -425,6 +479,116 @@ func (e *Engine) CompleteTask(ctx context.Context, taskID, choice, actorID strin
 		"_task_id":     taskID,
 		"_task_choice": choice,
 	})
+}
+
+// ChildCompleted notifies the parent workflow that a child has reached a terminal state.
+// For single children, it fires OnChildCompleted. For grouped children, it evaluates
+// the join policy and fires OnChildrenJoined when satisfied.
+func (e *Engine) ChildCompleted(ctx context.Context, childAggregateType, childAggregateID, terminalState string) (*types.TransitionResult, error) {
+	if e.deps.ChildStore == nil {
+		return nil, fmt.Errorf("flowstate: ChildStore not configured")
+	}
+
+	// Look up child relation
+	relation, err := e.deps.ChildStore.GetByChild(ctx, childAggregateType, childAggregateID)
+	if err != nil {
+		return nil, fmt.Errorf("flowstate: get child relation: %w", err)
+	}
+
+	// Mark child as completed
+	_ = e.deps.ChildStore.Complete(ctx, nil, childAggregateType, childAggregateID, terminalState)
+
+	// Look up parent definition
+	def, ok := e.definitions[relation.ParentAggregateType]
+	if !ok {
+		return nil, fmt.Errorf("flowstate: no workflow registered for parent aggregate type %q", relation.ParentAggregateType)
+	}
+
+	// Load parent instance
+	instance, err := e.deps.InstanceStore.Get(ctx, relation.ParentAggregateType, relation.ParentAggregateID)
+	if err != nil {
+		return nil, fmt.Errorf("flowstate: get parent instance: %w", err)
+	}
+
+	// If this child belongs to a group, evaluate join policy
+	if relation.GroupID != "" {
+		return e.evaluateJoinPolicy(ctx, relation, def, instance)
+	}
+
+	// Single child: find matching OnChildCompleted transition
+	for name, tr := range def.Transitions {
+		if tr.TriggerType == types.TriggerChildCompleted && tr.TriggerKey == childAggregateType {
+			if containsSource(tr.Sources, instance.CurrentState) {
+				return e.Transition(ctx, relation.ParentAggregateType, relation.ParentAggregateID, name, "system", map[string]any{
+					"_child_aggregate_type": childAggregateType,
+					"_child_aggregate_id":   childAggregateID,
+					"_child_terminal_state": terminalState,
+				})
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("flowstate: no OnChildCompleted transition matches child type %q from parent state %q: %w",
+		childAggregateType, instance.CurrentState, e.deps.ErrNoMatchingSignal)
+}
+
+// evaluateJoinPolicy checks if the join policy for a group of children is satisfied.
+func (e *Engine) evaluateJoinPolicy(
+	ctx context.Context,
+	relation *types.ChildRelation,
+	def *types.Definition,
+	instance *types.WorkflowInstance,
+) (*types.TransitionResult, error) {
+	siblings, err := e.deps.ChildStore.GetByGroup(ctx, relation.GroupID)
+	if err != nil {
+		return nil, fmt.Errorf("flowstate: get siblings by group: %w", err)
+	}
+
+	completedCount := 0
+	total := len(siblings)
+	for _, s := range siblings {
+		if s.Status == "COMPLETED" {
+			completedCount++
+		}
+	}
+
+	joinMode := relation.JoinPolicy
+	satisfied := false
+	switch joinMode {
+	case "ALL", "":
+		satisfied = completedCount == total
+	case "ANY":
+		satisfied = completedCount >= 1
+	case "N":
+		// Find the ChildrenDef to get the count
+		for _, tr := range def.Transitions {
+			if tr.ChildrenDef != nil && tr.ChildrenDef.Join.Mode == "N" {
+				satisfied = completedCount >= tr.ChildrenDef.Join.Count
+				break
+			}
+		}
+	}
+
+	if !satisfied {
+		return nil, fmt.Errorf("flowstate: join policy %q not yet satisfied (%d/%d completed): %w",
+			joinMode, completedCount, total, e.deps.ErrNoMatchingSignal)
+	}
+
+	// Find matching OnChildrenJoined transition
+	for name, tr := range def.Transitions {
+		if tr.TriggerType == types.TriggerChildrenJoined {
+			if containsSource(tr.Sources, instance.CurrentState) {
+				return e.Transition(ctx, relation.ParentAggregateType, relation.ParentAggregateID, name, "system", map[string]any{
+					"_group_id":        relation.GroupID,
+					"_completed_count": completedCount,
+					"_total_count":     total,
+				})
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("flowstate: no OnChildrenJoined transition from parent state %q: %w",
+		instance.CurrentState, e.deps.ErrNoMatchingSignal)
 }
 
 func (e *Engine) loadOrCreate(

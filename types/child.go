@@ -12,6 +12,7 @@ type ChildDef struct {
 type ChildrenDef struct {
 	WorkflowType string
 	InputsFn     func(aggregate any) []map[string]any
+	Join         JoinPolicy
 }
 
 // ChildRelation tracks a parent-child workflow relationship.

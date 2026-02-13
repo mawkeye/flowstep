@@ -8,12 +8,14 @@ import (
 
 // transitionBuilder collects options for a single transition.
 type transitionBuilder struct {
-	name    string
-	sources []string
-	target  string
-	event   string
-	guards  []types.Guard
-	routes  []types.Route
+	name       string
+	sources    []string
+	target     string
+	event      string
+	guards     []types.Guard
+	condition  types.Condition
+	isDefault  bool
+	routes     []types.Route
 	activities []types.ActivityDef
 	taskDef    *types.TaskDef
 	childDef   *types.ChildDef
@@ -121,38 +123,33 @@ func AllowSelfTransition() TransitionOption {
 }
 
 // Route adds a conditional route to the transition.
+// Usage: Route(When(cond), To("STATE")) or Route(Default(), To("STATE"))
 func Route(opts ...TransitionOption) TransitionOption {
 	return func(tb *transitionBuilder) {
-		// Route options are applied to a sub-builder to extract target and condition
 		sub := &transitionBuilder{}
 		for _, opt := range opts {
 			opt(sub)
 		}
 		route := types.Route{
-			Target: sub.target,
-		}
-		if len(sub.guards) > 0 {
-			// Use first guard's condition if set via When()
+			Target:    sub.target,
+			Condition: sub.condition,
+			IsDefault: sub.isDefault,
 		}
 		tb.routes = append(tb.routes, route)
 	}
 }
 
-// When sets a condition for a route.
+// When sets a condition for route evaluation.
 func When(cond types.Condition) TransitionOption {
 	return func(tb *transitionBuilder) {
-		if len(tb.routes) > 0 {
-			tb.routes[len(tb.routes)-1].Condition = cond
-		}
+		tb.condition = cond
 	}
 }
 
-// Default marks the last route as the default.
+// Default marks a route as the default fallback.
 func Default() TransitionOption {
 	return func(tb *transitionBuilder) {
-		if len(tb.routes) > 0 {
-			tb.routes[len(tb.routes)-1].IsDefault = true
-		}
+		tb.isDefault = true
 	}
 }
 

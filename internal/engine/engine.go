@@ -160,8 +160,15 @@ func (e *Engine) Transition(
 		return nil, err
 	}
 
-	// 7. Determine target state
+	// 7. Determine target state (direct or routed)
 	targetState := tr.Target
+	if len(tr.Routes) > 0 {
+		resolved, err := e.resolveRoute(ctx, tr, nil, params)
+		if err != nil {
+			return nil, err
+		}
+		targetState = resolved
+	}
 
 	// 8. Build event
 	now := e.deps.Clock.Now()
@@ -464,6 +471,29 @@ func (e *Engine) loadOrCreate(
 	}
 
 	return &newInstance, nil
+}
+
+func (e *Engine) resolveRoute(ctx context.Context, tr types.TransitionDef, aggregate any, params map[string]any) (string, error) {
+	var defaultTarget string
+	for _, route := range tr.Routes {
+		if route.IsDefault {
+			defaultTarget = route.Target
+			continue
+		}
+		if route.Condition != nil {
+			matched, err := route.Condition.Evaluate(ctx, aggregate, params)
+			if err != nil {
+				return "", fmt.Errorf("flowstate: condition evaluation failed: %w", err)
+			}
+			if matched {
+				return route.Target, nil
+			}
+		}
+	}
+	if defaultTarget != "" {
+		return defaultTarget, nil
+	}
+	return "", fmt.Errorf("flowstate: no condition matched and no default route: %w", e.deps.ErrNoMatchingRoute)
 }
 
 func (e *Engine) runGuards(ctx context.Context, tr types.TransitionDef, aggregate any, params map[string]any) error {

@@ -707,6 +707,108 @@ func TestEngineTaskReject(t *testing.T) {
 	}
 }
 
+// --- Conditional Routing tests ---
+
+type amountCondition struct {
+	threshold float64
+}
+
+func (c *amountCondition) Evaluate(_ context.Context, _ any, params map[string]any) (bool, error) {
+	amount, ok := params["amount"].(float64)
+	if !ok {
+		return false, nil
+	}
+	return amount >= c.threshold, nil
+}
+
+func TestEngineConditionalRouting(t *testing.T) {
+	def, err := flowstate.Define("order", "routed").
+		Version(1).
+		States(
+			flowstate.Initial("CREATED"),
+			flowstate.State("STANDARD_REVIEW"),
+			flowstate.State("VIP_REVIEW"),
+			flowstate.Terminal("DONE"),
+		).
+		Transition("route_review",
+			flowstate.From("CREATED"),
+			flowstate.Event("ReviewRouted"),
+			flowstate.Route(flowstate.When(&amountCondition{threshold: 1000}), flowstate.To("VIP_REVIEW")),
+			flowstate.Route(flowstate.Default(), flowstate.To("STANDARD_REVIEW")),
+		).
+		Transition("finish_standard",
+			flowstate.From("STANDARD_REVIEW"),
+			flowstate.To("DONE"),
+			flowstate.Event("Done"),
+		).
+		Transition("finish_vip",
+			flowstate.From("VIP_REVIEW"),
+			flowstate.To("DONE"),
+			flowstate.Event("Done"),
+		).
+		Build()
+	if err != nil {
+		t.Fatalf("failed to build definition: %v", err)
+	}
+
+	h := newTestHarness(t)
+	h.engine.Register(def)
+	ctx := context.Background()
+
+	// Low amount -> STANDARD_REVIEW
+	result, err := h.engine.Transition(ctx, "order", "o-1", "route_review", "user-1", map[string]any{"amount": 500.0})
+	if err != nil {
+		t.Fatalf("routing failed: %v", err)
+	}
+	if result.NewState != "STANDARD_REVIEW" {
+		t.Errorf("expected STANDARD_REVIEW, got %s", result.NewState)
+	}
+
+	// High amount -> VIP_REVIEW
+	result, err = h.engine.Transition(ctx, "order", "o-2", "route_review", "user-1", map[string]any{"amount": 2000.0})
+	if err != nil {
+		t.Fatalf("routing failed: %v", err)
+	}
+	if result.NewState != "VIP_REVIEW" {
+		t.Errorf("expected VIP_REVIEW, got %s", result.NewState)
+	}
+}
+
+func TestEngineConditionalRoutingNoMatch(t *testing.T) {
+	// Route with condition but no default — should fail if condition doesn't match
+	def, err := flowstate.Define("order", "no_default").
+		Version(1).
+		States(
+			flowstate.Initial("CREATED"),
+			flowstate.State("VIP"),
+			flowstate.Terminal("DONE"),
+		).
+		Transition("route",
+			flowstate.From("CREATED"),
+			flowstate.Event("Routed"),
+			flowstate.Route(flowstate.When(&amountCondition{threshold: 1000}), flowstate.To("VIP")),
+		).
+		Transition("finish",
+			flowstate.From("VIP"),
+			flowstate.To("DONE"),
+			flowstate.Event("Done"),
+		).
+		Build()
+	if err != nil {
+		t.Fatalf("failed to build definition: %v", err)
+	}
+
+	h := newTestHarness(t)
+	h.engine.Register(def)
+	ctx := context.Background()
+
+	_, err = h.engine.Transition(ctx, "order", "o-1", "route", "user-1", map[string]any{"amount": 100.0})
+	if !errors.Is(err, flowstate.ErrNoMatchingRoute) {
+		t.Errorf("expected ErrNoMatchingRoute, got %v", err)
+	}
+}
+
 // Ensure Guard interface from types package is compatible
 var _ types.Guard = (*alwaysFailGuard)(nil)
 var _ types.Guard = (*passingGuard)(nil)
+var _ types.Condition = (*amountCondition)(nil)

@@ -1047,6 +1047,112 @@ func TestEngineSpawnChildren_JoinAll(t *testing.T) {
 	}
 }
 
+func TestEngineVersionCoexistence(t *testing.T) {
+	// Register v1 and v2 of same workflow type for same aggregate.
+	// Existing instances (created under v1) should continue using v1 transitions.
+	// New instances should use v2.
+
+	defV1, err := flowstate.Define("ticket", "support").
+		Version(1).
+		States(
+			flowstate.Initial("OPEN"),
+			flowstate.State("REVIEWING"),
+			flowstate.Terminal("CLOSED"),
+		).
+		Transition("review",
+			flowstate.From("OPEN"),
+			flowstate.To("REVIEWING"),
+			flowstate.Event("TicketReviewing"),
+		).
+		Transition("close",
+			flowstate.From("REVIEWING"),
+			flowstate.To("CLOSED"),
+			flowstate.Event("TicketClosed"),
+		).
+		Build()
+	if err != nil {
+		t.Fatalf("v1 build failed: %v", err)
+	}
+
+	defV2, err := flowstate.Define("ticket", "support").
+		Version(2).
+		States(
+			flowstate.Initial("OPEN"),
+			flowstate.State("IN_PROGRESS"),
+			flowstate.Terminal("RESOLVED"),
+		).
+		Transition("start_work",
+			flowstate.From("OPEN"),
+			flowstate.To("IN_PROGRESS"),
+			flowstate.Event("WorkStarted"),
+		).
+		Transition("resolve",
+			flowstate.From("IN_PROGRESS"),
+			flowstate.To("RESOLVED"),
+			flowstate.Event("TicketResolved"),
+		).
+		Build()
+	if err != nil {
+		t.Fatalf("v2 build failed: %v", err)
+	}
+
+	h := newTestHarness(t)
+	h.engine.Register(defV1)
+
+	ctx := context.Background()
+
+	// Create instance t-1 under v1, move to REVIEWING (non-terminal)
+	_, err = h.engine.Transition(ctx, "ticket", "t-1", "review", "agent-1", nil)
+	if err != nil {
+		t.Fatalf("v1 review failed: %v", err)
+	}
+
+	// Now register v2 — should become the default for new instances
+	h.engine.Register(defV2)
+
+	// Existing instance t-1 (v1, in REVIEWING) should still use v1's "close" transition
+	result, err := h.engine.Transition(ctx, "ticket", "t-1", "close", "agent-1", nil)
+	if err != nil {
+		t.Fatalf("v1 close on existing instance failed: %v", err)
+	}
+	if result.NewState != "CLOSED" {
+		t.Errorf("expected CLOSED, got %s", result.NewState)
+	}
+	if result.Event.WorkflowVersion != 1 {
+		t.Errorf("expected version 1 event, got %d", result.Event.WorkflowVersion)
+	}
+
+	// New instance t-2 should use v2 (has start_work transition, not close)
+	result2, err := h.engine.Transition(ctx, "ticket", "t-2", "start_work", "agent-1", nil)
+	if err != nil {
+		t.Fatalf("v2 start_work failed: %v", err)
+	}
+	if result2.NewState != "IN_PROGRESS" {
+		t.Errorf("expected IN_PROGRESS, got %s", result2.NewState)
+	}
+	if result2.Event.WorkflowVersion != 2 {
+		t.Errorf("expected version 2 event, got %d", result2.Event.WorkflowVersion)
+	}
+
+	// t-2 should continue with v2 transitions
+	result3, err := h.engine.Transition(ctx, "ticket", "t-2", "resolve", "agent-1", nil)
+	if err != nil {
+		t.Fatalf("v2 resolve failed: %v", err)
+	}
+	if result3.NewState != "RESOLVED" {
+		t.Errorf("expected RESOLVED, got %s", result3.NewState)
+	}
+
+	// New instance t-3 should also use v2 — "close" from v1 should not work
+	_, err = h.engine.Transition(ctx, "ticket", "t-3", "close", "agent-1", nil)
+	if err == nil {
+		t.Error("expected error: 'close' transition doesn't exist in v2")
+	}
+	if !errors.Is(err, flowstate.ErrInvalidTransition) {
+		t.Errorf("expected ErrInvalidTransition, got: %v", err)
+	}
+}
+
 // Ensure interfaces are compatible
 var _ types.Guard = (*alwaysFailGuard)(nil)
 var _ types.Guard = (*passingGuard)(nil)

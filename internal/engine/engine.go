@@ -107,21 +107,48 @@ type Hooks interface {
 
 // Engine executes workflow state transitions.
 type Engine struct {
-	deps        Deps
-	definitions map[string]*types.Definition // key: aggregateType
+	deps     Deps
+	versions map[string]map[int]*types.Definition // key: aggregateType -> version -> def
+	latest   map[string]*types.Definition          // key: aggregateType -> latest def
 }
 
 // New creates a new Engine with the given dependencies.
 func New(deps Deps) *Engine {
 	return &Engine{
-		deps:        deps,
-		definitions: make(map[string]*types.Definition),
+		deps:     deps,
+		versions: make(map[string]map[int]*types.Definition),
+		latest:   make(map[string]*types.Definition),
 	}
 }
 
 // Register adds a workflow definition to the engine.
+// If a definition with the same aggregate type already exists, the newer version
+// becomes the default for new instances. Existing instances continue using their
+// creation version.
 func (e *Engine) Register(def *types.Definition) {
-	e.definitions[def.AggregateType] = def
+	if _, ok := e.versions[def.AggregateType]; !ok {
+		e.versions[def.AggregateType] = make(map[int]*types.Definition)
+	}
+	e.versions[def.AggregateType][def.Version] = def
+
+	// Update latest if this version is higher
+	if cur, ok := e.latest[def.AggregateType]; !ok || def.Version >= cur.Version {
+		e.latest[def.AggregateType] = def
+	}
+}
+
+// definitionFor returns the definition for the given aggregate type and version.
+// If version is 0, returns the latest version.
+func (e *Engine) definitionFor(aggregateType string, version int) (*types.Definition, bool) {
+	if version > 0 {
+		if versions, ok := e.versions[aggregateType]; ok {
+			def, ok := versions[version]
+			return def, ok
+		}
+		return nil, false
+	}
+	def, ok := e.latest[aggregateType]
+	return def, ok
 }
 
 // Transition executes a named transition for the given aggregate.
@@ -134,10 +161,31 @@ func (e *Engine) Transition(
 ) (*types.TransitionResult, error) {
 	start := e.deps.Clock.Now()
 
-	// 1. Look up definition
-	def, ok := e.definitions[aggregateType]
-	if !ok {
-		return nil, fmt.Errorf("flowstate: no workflow registered for aggregate type %q", aggregateType)
+	// 1. Load or create workflow instance, then resolve the correct definition version
+	instance, err := e.deps.InstanceStore.Get(ctx, aggregateType, aggregateID)
+	var def *types.Definition
+	if err != nil {
+		if !errors.Is(err, e.deps.ErrInstanceNotFound) {
+			return nil, fmt.Errorf("flowstate: get instance: %w", err)
+		}
+		// New instance: use latest definition
+		var ok bool
+		def, ok = e.definitionFor(aggregateType, 0)
+		if !ok {
+			return nil, fmt.Errorf("flowstate: no workflow registered for aggregate type %q", aggregateType)
+		}
+		instance, err = e.createInstance(ctx, def, aggregateType, aggregateID)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		// Existing instance: use its version
+		var ok bool
+		def, ok = e.definitionFor(aggregateType, instance.WorkflowVersion)
+		if !ok {
+			return nil, fmt.Errorf("flowstate: no workflow version %d registered for aggregate type %q",
+				instance.WorkflowVersion, aggregateType)
+		}
 	}
 
 	// 2. Look up transition
@@ -145,12 +193,6 @@ func (e *Engine) Transition(
 	if !ok {
 		return nil, fmt.Errorf("flowstate: transition %q not found in workflow %q: %w",
 			transitionName, def.WorkflowType, e.deps.ErrInvalidTransition)
-	}
-
-	// 3. Load or create workflow instance
-	instance, err := e.loadOrCreate(ctx, def, aggregateType, aggregateID)
-	if err != nil {
-		return nil, err
 	}
 
 	// 4. Check if already terminal
@@ -369,22 +411,29 @@ func (e *Engine) Transition(
 
 // Signal sends a signal to trigger a matching OnSignal transition.
 func (e *Engine) Signal(ctx context.Context, input types.SignalInput) (*types.TransitionResult, error) {
-	def, ok := e.definitions[input.TargetAggregateType]
-	if !ok {
-		return nil, fmt.Errorf("flowstate: no workflow registered for aggregate type %q", input.TargetAggregateType)
-	}
-
-	// Load instance (must exist for signals)
+	// Load or create instance, then resolve definition version
 	instance, err := e.deps.InstanceStore.Get(ctx, input.TargetAggregateType, input.TargetAggregateID)
+	var def *types.Definition
 	if err != nil {
 		if errors.Is(err, e.deps.ErrInstanceNotFound) {
-			// Auto-create at initial state for signal
-			instance, err = e.loadOrCreate(ctx, def, input.TargetAggregateType, input.TargetAggregateID)
+			latestDef, ok := e.definitionFor(input.TargetAggregateType, 0)
+			if !ok {
+				return nil, fmt.Errorf("flowstate: no workflow registered for aggregate type %q", input.TargetAggregateType)
+			}
+			instance, err = e.createInstance(ctx, latestDef, input.TargetAggregateType, input.TargetAggregateID)
 			if err != nil {
 				return nil, err
 			}
+			def = latestDef
 		} else {
 			return nil, fmt.Errorf("flowstate: get instance: %w", err)
+		}
+	} else {
+		var ok bool
+		def, ok = e.definitionFor(input.TargetAggregateType, instance.WorkflowVersion)
+		if !ok {
+			return nil, fmt.Errorf("flowstate: no workflow version %d registered for aggregate type %q",
+				instance.WorkflowVersion, input.TargetAggregateType)
 		}
 	}
 
@@ -424,16 +473,17 @@ func (e *Engine) CompleteTask(ctx context.Context, taskID, choice, actorID strin
 		return nil, fmt.Errorf("flowstate: get task: %w", err)
 	}
 
-	// Look up definition
-	def, ok := e.definitions[task.AggregateType]
-	if !ok {
-		return nil, fmt.Errorf("flowstate: no workflow registered for aggregate type %q", task.AggregateType)
-	}
-
 	// Load instance
 	instance, err := e.deps.InstanceStore.Get(ctx, task.AggregateType, task.AggregateID)
 	if err != nil {
 		return nil, fmt.Errorf("flowstate: get instance: %w", err)
+	}
+
+	// Look up definition for instance's version
+	def, ok := e.definitionFor(task.AggregateType, instance.WorkflowVersion)
+	if !ok {
+		return nil, fmt.Errorf("flowstate: no workflow version %d registered for aggregate type %q",
+			instance.WorkflowVersion, task.AggregateType)
 	}
 
 	// Find matching OnTaskCompleted transitions from current state
@@ -498,16 +548,17 @@ func (e *Engine) ChildCompleted(ctx context.Context, childAggregateType, childAg
 	// Mark child as completed
 	_ = e.deps.ChildStore.Complete(ctx, nil, childAggregateType, childAggregateID, terminalState)
 
-	// Look up parent definition
-	def, ok := e.definitions[relation.ParentAggregateType]
-	if !ok {
-		return nil, fmt.Errorf("flowstate: no workflow registered for parent aggregate type %q", relation.ParentAggregateType)
-	}
-
 	// Load parent instance
 	instance, err := e.deps.InstanceStore.Get(ctx, relation.ParentAggregateType, relation.ParentAggregateID)
 	if err != nil {
 		return nil, fmt.Errorf("flowstate: get parent instance: %w", err)
+	}
+
+	// Look up parent definition for instance's version
+	def, ok := e.definitionFor(relation.ParentAggregateType, instance.WorkflowVersion)
+	if !ok {
+		return nil, fmt.Errorf("flowstate: no workflow version %d registered for parent aggregate type %q",
+			instance.WorkflowVersion, relation.ParentAggregateType)
 	}
 
 	// If this child belongs to a group, evaluate join policy
@@ -591,21 +642,11 @@ func (e *Engine) evaluateJoinPolicy(
 		instance.CurrentState, e.deps.ErrNoMatchingSignal)
 }
 
-func (e *Engine) loadOrCreate(
+func (e *Engine) createInstance(
 	ctx context.Context,
 	def *types.Definition,
 	aggregateType, aggregateID string,
 ) (*types.WorkflowInstance, error) {
-	instance, err := e.deps.InstanceStore.Get(ctx, aggregateType, aggregateID)
-	if err == nil {
-		return instance, nil
-	}
-
-	if !errors.Is(err, e.deps.ErrInstanceNotFound) {
-		return nil, fmt.Errorf("flowstate: get instance: %w", err)
-	}
-
-	// Auto-create at initial state
 	now := e.deps.Clock.Now()
 	newInstance := types.WorkflowInstance{
 		ID:              generateID(),

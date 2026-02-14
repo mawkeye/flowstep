@@ -95,3 +95,9 @@ func (e *Engine) CompleteTask(ctx context.Context, taskID, choice, actorID strin
 func (e *Engine) ChildCompleted(ctx context.Context, childAggregateType, childAggregateID, terminalState string) (*types.TransitionResult, error) {
 	return e.inner.ChildCompleted(ctx, childAggregateType, childAggregateID, terminalState)
 }
+
+// ForceState is an admin recovery operation that moves a workflow to any state,
+// bypassing normal transition rules and guards.
+func (e *Engine) ForceState(ctx context.Context, aggregateType, aggregateID, targetState, actorID, reason string) (*types.TransitionResult, error) {
+	return e.inner.ForceState(ctx, aggregateType, aggregateID, targetState, actorID, reason)
+}

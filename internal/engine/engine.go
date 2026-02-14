@@ -646,6 +646,90 @@ func (e *Engine) evaluateJoinPolicy(
 		instance.CurrentState, e.deps.ErrNoMatchingSignal)
 }
 
+// ForceState is an admin recovery operation that bypasses normal transition rules.
+// It moves a workflow instance to any state, including from terminal states.
+func (e *Engine) ForceState(ctx context.Context, aggregateType, aggregateID, targetState, actorID, reason string) (*types.TransitionResult, error) {
+	// Load instance (must exist)
+	instance, err := e.deps.InstanceStore.Get(ctx, aggregateType, aggregateID)
+	if err != nil {
+		return nil, fmt.Errorf("flowstate: get instance: %w", err)
+	}
+
+	// Look up definition for instance's version
+	def, ok := e.definitionFor(aggregateType, instance.WorkflowVersion)
+	if !ok {
+		return nil, fmt.Errorf("flowstate: no workflow version %d registered for aggregate type %q",
+			instance.WorkflowVersion, aggregateType)
+	}
+
+	// Validate target state exists in definition
+	if _, exists := def.States[targetState]; !exists {
+		return nil, fmt.Errorf("flowstate: target state %q not found in workflow %q: %w",
+			targetState, def.WorkflowType, e.deps.ErrInvalidTransition)
+	}
+
+	// Build event
+	now := e.deps.Clock.Now()
+	previousState := instance.CurrentState
+	event := types.DomainEvent{
+		ID:              generateID(),
+		AggregateType:   aggregateType,
+		AggregateID:     aggregateID,
+		WorkflowType:    def.WorkflowType,
+		WorkflowVersion: def.Version,
+		EventType:       "StateForced",
+		CorrelationID:   instance.CorrelationID,
+		ActorID:         actorID,
+		TransitionName:  "_force_state",
+		StateBefore:     copyMap(instance.StateData),
+		StateAfter:      copyMap(instance.StateData),
+		Payload:         map[string]any{"_reason": reason, "_from": previousState, "_to": targetState},
+		CreatedAt:       now,
+	}
+
+	// Update instance
+	instance.CurrentState = targetState
+	instance.IsStuck = false
+	instance.StuckReason = ""
+	instance.UpdatedAt = now
+
+	// Transaction: persist
+	tx, err := e.deps.TxProvider.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("flowstate: begin tx: %w", err)
+	}
+	if err := e.deps.EventStore.Append(ctx, tx, event); err != nil {
+		_ = e.deps.TxProvider.Rollback(ctx, tx)
+		return nil, fmt.Errorf("flowstate: append event: %w", err)
+	}
+	if err := e.deps.InstanceStore.Update(ctx, tx, *instance); err != nil {
+		_ = e.deps.TxProvider.Rollback(ctx, tx)
+		return nil, fmt.Errorf("flowstate: update instance: %w", err)
+	}
+	if err := e.deps.TxProvider.Commit(ctx, tx); err != nil {
+		return nil, fmt.Errorf("flowstate: commit tx: %w", err)
+	}
+
+	// Emit event
+	if e.deps.EventBus != nil {
+		_ = e.deps.EventBus.Emit(ctx, event)
+	}
+
+	isTerminal := false
+	if st, exists := def.States[targetState]; exists && st.IsTerminal {
+		isTerminal = true
+	}
+
+	return &types.TransitionResult{
+		Instance:       *instance,
+		Event:          event,
+		PreviousState:  previousState,
+		NewState:       targetState,
+		TransitionName: "_force_state",
+		IsTerminal:     isTerminal,
+	}, nil
+}
+
 func (e *Engine) createInstance(
 	ctx context.Context,
 	def *types.Definition,

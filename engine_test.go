@@ -1311,6 +1311,104 @@ func TestEngineHooksCalledOnActivityDispatched(t *testing.T) {
 	}
 }
 
+func TestEngineForceState(t *testing.T) {
+	h := newTestHarness(t)
+	def, err := flowstate.Define("order", "simple").
+		Version(1).
+		States(
+			flowstate.Initial("CREATED"),
+			flowstate.State("PROCESSING"),
+			flowstate.Terminal("DONE"),
+			flowstate.Terminal("CANCELLED"),
+		).
+		Transition("process",
+			flowstate.From("CREATED"),
+			flowstate.To("PROCESSING"),
+			flowstate.Event("OrderProcessing"),
+		).
+		Transition("complete",
+			flowstate.From("PROCESSING"),
+			flowstate.To("DONE"),
+			flowstate.Event("OrderCompleted"),
+		).
+		Transition("cancel",
+			flowstate.From("CREATED", "PROCESSING"),
+			flowstate.To("CANCELLED"),
+			flowstate.Event("OrderCancelled"),
+		).
+		Build()
+	if err != nil {
+		t.Fatalf("build failed: %v", err)
+	}
+
+	h.engine.Register(def)
+	ctx := context.Background()
+
+	// Create instance and move to PROCESSING
+	_, err = h.engine.Transition(ctx, "order", "o-1", "process", "user-1", nil)
+	if err != nil {
+		t.Fatalf("process failed: %v", err)
+	}
+
+	// Force state to CANCELLED (bypasses normal transitions)
+	result, err := h.engine.ForceState(ctx, "order", "o-1", "CANCELLED", "admin-1", "Customer requested cancel")
+	if err != nil {
+		t.Fatalf("force state failed: %v", err)
+	}
+	if result.NewState != "CANCELLED" {
+		t.Errorf("expected CANCELLED, got %s", result.NewState)
+	}
+	if result.Event.EventType != "StateForced" {
+		t.Errorf("expected StateForced event, got %s", result.Event.EventType)
+	}
+
+	// Verify instance is in CANCELLED state
+	inst, err := h.instanceStore.Get(ctx, "order", "o-1")
+	if err != nil {
+		t.Fatalf("get instance failed: %v", err)
+	}
+	if inst.CurrentState != "CANCELLED" {
+		t.Errorf("expected CANCELLED, got %s", inst.CurrentState)
+	}
+}
+
+func TestEngineForceStateFromTerminal(t *testing.T) {
+	h := newTestHarness(t)
+	def, err := flowstate.Define("order", "simple").
+		Version(1).
+		States(
+			flowstate.Initial("CREATED"),
+			flowstate.Terminal("DONE"),
+		).
+		Transition("complete",
+			flowstate.From("CREATED"),
+			flowstate.To("DONE"),
+			flowstate.Event("OrderCompleted"),
+		).
+		Build()
+	if err != nil {
+		t.Fatalf("build failed: %v", err)
+	}
+
+	h.engine.Register(def)
+	ctx := context.Background()
+
+	// Move to terminal DONE
+	_, err = h.engine.Transition(ctx, "order", "o-1", "complete", "user-1", nil)
+	if err != nil {
+		t.Fatalf("complete failed: %v", err)
+	}
+
+	// Force state back to CREATED (admin recovery from terminal)
+	result, err := h.engine.ForceState(ctx, "order", "o-1", "CREATED", "admin-1", "Reopening order")
+	if err != nil {
+		t.Fatalf("force state from terminal failed: %v", err)
+	}
+	if result.NewState != "CREATED" {
+		t.Errorf("expected CREATED, got %s", result.NewState)
+	}
+}
+
 // Ensure interfaces are compatible
 var _ types.Guard = (*alwaysFailGuard)(nil)
 var _ types.Guard = (*passingGuard)(nil)

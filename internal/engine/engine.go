@@ -102,6 +102,9 @@ type Clock interface {
 type Hooks interface {
 	OnTransition(ctx context.Context, result types.TransitionResult, duration time.Duration)
 	OnGuardFailed(ctx context.Context, workflowType, transitionName, guardName string, err error)
+	OnActivityDispatched(ctx context.Context, invocation types.ActivityInvocation)
+	OnActivityCompleted(ctx context.Context, invocation types.ActivityInvocation, result *types.ActivityResult)
+	OnActivityFailed(ctx context.Context, invocation types.ActivityInvocation, err error)
 	OnStuck(ctx context.Context, instance types.WorkflowInstance, reason string)
 }
 
@@ -208,7 +211,7 @@ func (e *Engine) Transition(
 	}
 
 	// 6. Run guards
-	if err := e.runGuards(ctx, tr, nil, params); err != nil {
+	if err := e.runGuards(ctx, def.WorkflowType, tr, nil, params); err != nil {
 		return nil, err
 	}
 
@@ -314,6 +317,7 @@ func (e *Engine) Transition(
 			// Dispatch to runner
 			_ = e.deps.ActivityRunner.Dispatch(ctx, invocation)
 			activitiesDispatched = append(activitiesDispatched, actDef.Name)
+			e.deps.Hooks.OnActivityDispatched(ctx, invocation)
 		}
 	}
 
@@ -701,9 +705,11 @@ func (e *Engine) resolveRoute(ctx context.Context, tr types.TransitionDef, aggre
 	return "", fmt.Errorf("flowstate: no condition matched and no default route: %w", e.deps.ErrNoMatchingRoute)
 }
 
-func (e *Engine) runGuards(ctx context.Context, tr types.TransitionDef, aggregate any, params map[string]any) error {
+func (e *Engine) runGuards(ctx context.Context, workflowType string, tr types.TransitionDef, aggregate any, params map[string]any) error {
 	for _, guard := range tr.Guards {
 		if err := guard.Check(ctx, aggregate, params); err != nil {
+			guardName := fmt.Sprintf("%T", guard)
+			e.deps.Hooks.OnGuardFailed(ctx, workflowType, tr.Name, guardName, err)
 			return fmt.Errorf("flowstate: guard failed: %w", e.deps.ErrGuardFailed)
 		}
 	}

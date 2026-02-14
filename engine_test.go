@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/mawkeye/flowstate"
 	"github.com/mawkeye/flowstate/adapters/chanbus"
@@ -1150,6 +1151,163 @@ func TestEngineVersionCoexistence(t *testing.T) {
 	}
 	if !errors.Is(err, flowstate.ErrInvalidTransition) {
 		t.Errorf("expected ErrInvalidTransition, got: %v", err)
+	}
+}
+
+// recordingHooks captures hook calls for test assertions.
+type recordingHooks struct {
+	transitions []types.TransitionResult
+	guardFails  []string
+	activities  []string
+}
+
+func (h *recordingHooks) OnTransition(_ context.Context, result types.TransitionResult, _ time.Duration) {
+	h.transitions = append(h.transitions, result)
+}
+func (h *recordingHooks) OnGuardFailed(_ context.Context, _, transitionName, guardName string, _ error) {
+	h.guardFails = append(h.guardFails, transitionName+":"+guardName)
+}
+func (h *recordingHooks) OnActivityDispatched(_ context.Context, inv types.ActivityInvocation) {
+	h.activities = append(h.activities, inv.ActivityName)
+}
+func (h *recordingHooks) OnActivityCompleted(context.Context, types.ActivityInvocation, *types.ActivityResult) {}
+func (h *recordingHooks) OnActivityFailed(context.Context, types.ActivityInvocation, error)                    {}
+func (h *recordingHooks) OnStuck(context.Context, types.WorkflowInstance, string)                              {}
+
+func TestEngineHooksCalledOnTransition(t *testing.T) {
+	hooks := &recordingHooks{}
+	es := memstore.NewEventStore()
+	is := memstore.NewInstanceStore()
+	engine, err := flowstate.NewEngine(
+		flowstate.WithEventStore(es),
+		flowstate.WithInstanceStore(is),
+		flowstate.WithTxProvider(memstore.NewTxProvider()),
+		flowstate.WithEventBus(chanbus.New()),
+		flowstate.WithHooks(hooks),
+	)
+	if err != nil {
+		t.Fatalf("failed to create engine: %v", err)
+	}
+
+	def, err := flowstate.Define("order", "simple").
+		Version(1).
+		States(
+			flowstate.Initial("CREATED"),
+			flowstate.Terminal("DONE"),
+		).
+		Transition("complete",
+			flowstate.From("CREATED"),
+			flowstate.To("DONE"),
+			flowstate.Event("OrderCompleted"),
+		).
+		Build()
+	if err != nil {
+		t.Fatalf("build failed: %v", err)
+	}
+
+	engine.Register(def)
+	_, err = engine.Transition(context.Background(), "order", "o-1", "complete", "user-1", nil)
+	if err != nil {
+		t.Fatalf("transition failed: %v", err)
+	}
+
+	if len(hooks.transitions) != 1 {
+		t.Fatalf("expected 1 OnTransition call, got %d", len(hooks.transitions))
+	}
+	if hooks.transitions[0].NewState != "DONE" {
+		t.Errorf("expected DONE in hook, got %s", hooks.transitions[0].NewState)
+	}
+}
+
+func TestEngineHooksCalledOnGuardFailed(t *testing.T) {
+	hooks := &recordingHooks{}
+	es := memstore.NewEventStore()
+	is := memstore.NewInstanceStore()
+	engine, err := flowstate.NewEngine(
+		flowstate.WithEventStore(es),
+		flowstate.WithInstanceStore(is),
+		flowstate.WithTxProvider(memstore.NewTxProvider()),
+		flowstate.WithHooks(hooks),
+	)
+	if err != nil {
+		t.Fatalf("failed to create engine: %v", err)
+	}
+
+	def, err := flowstate.Define("order", "guarded").
+		Version(1).
+		States(
+			flowstate.Initial("CREATED"),
+			flowstate.Terminal("DONE"),
+		).
+		Transition("complete",
+			flowstate.From("CREATED"),
+			flowstate.To("DONE"),
+			flowstate.Event("OrderCompleted"),
+			flowstate.Guards(&alwaysFailGuard{}),
+		).
+		Build()
+	if err != nil {
+		t.Fatalf("build failed: %v", err)
+	}
+
+	engine.Register(def)
+	_, err = engine.Transition(context.Background(), "order", "o-1", "complete", "user-1", nil)
+	if err == nil {
+		t.Fatal("expected guard failure")
+	}
+
+	if len(hooks.guardFails) != 1 {
+		t.Fatalf("expected 1 OnGuardFailed call, got %d", len(hooks.guardFails))
+	}
+}
+
+func TestEngineHooksCalledOnActivityDispatched(t *testing.T) {
+	hooks := &recordingHooks{}
+	es := memstore.NewEventStore()
+	is := memstore.NewInstanceStore()
+	act := &recordingActivity{name: "send_email"}
+	runner := newRecordingRunner(act)
+
+	engine, err := flowstate.NewEngine(
+		flowstate.WithEventStore(es),
+		flowstate.WithInstanceStore(is),
+		flowstate.WithTxProvider(memstore.NewTxProvider()),
+		flowstate.WithActivityRunner(runner),
+		flowstate.WithActivityStore(memstore.NewActivityStore()),
+		flowstate.WithHooks(hooks),
+	)
+	if err != nil {
+		t.Fatalf("failed to create engine: %v", err)
+	}
+
+	def, err := flowstate.Define("order", "with_activity").
+		Version(1).
+		States(
+			flowstate.Initial("CREATED"),
+			flowstate.Terminal("DONE"),
+		).
+		Transition("complete",
+			flowstate.From("CREATED"),
+			flowstate.To("DONE"),
+			flowstate.Event("OrderCompleted"),
+			flowstate.Dispatch("send_email"),
+		).
+		Build()
+	if err != nil {
+		t.Fatalf("build failed: %v", err)
+	}
+
+	engine.Register(def)
+	_, err = engine.Transition(context.Background(), "order", "o-1", "complete", "user-1", nil)
+	if err != nil {
+		t.Fatalf("transition failed: %v", err)
+	}
+
+	if len(hooks.activities) != 1 {
+		t.Fatalf("expected 1 OnActivityDispatched call, got %d", len(hooks.activities))
+	}
+	if hooks.activities[0] != "send_email" {
+		t.Errorf("expected send_email, got %s", hooks.activities[0])
 	}
 }
 

@@ -84,3 +84,19 @@ We are strictly following a **Library Layout** with **Clean Architecture** princ
 * ❌ **Global State:** No `init()` functions or global variables.
 * ❌ **Panic:** Never panic. Always return `error`.
 * ❌ **Utility Packages:** Avoid `util` or `common`. Put code where it belongs.
+
+## 6. Versioning & Release Strategy
+We strictly follow **Semantic Versioning (SemVer) 2.0.0**.
+
+### A. Lifecycle
+* **Initial Version:** `v0.1.0` (Alpha/Development).
+* **1.0.0 Milestone:** Released only after **Phase 22 (Integration Tests)** is complete and the API is stable.
+
+### B. Workflow
+1.  **Track Changes:** Update `CHANGELOG.md` with every significant PR or Phase completion.
+2.  **Tag Frequently:** Tag releases at the end of every **Phase**.
+    * *Command:* `git tag -a v0.X.Y -m "feat: completed phase X"`
+3.  **Versioning Rules:**
+    * **Patch (`0.1.1`):** Bug fixes, internal refactors.
+    * **Minor (`0.2.0`):** New features (e.g., adding a new Store or Bus).
+    * **Major (`1.0.0`):** Breaking API changes (reserved for final release).

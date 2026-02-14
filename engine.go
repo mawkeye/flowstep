@@ -60,6 +60,7 @@ func NewEngine(opts ...Option) (*Engine, error) {
 		ErrNoMatchingRoute:   ErrNoMatchingRoute,
 		ErrTaskNotFound:      ErrTaskNotFound,
 		ErrInvalidChoice:     ErrInvalidChoice,
+		ErrEngineShutdown:    ErrEngineShutdown,
 	}
 
 	return &Engine{inner: internalengine.New(deps)}, nil
@@ -100,4 +101,9 @@ func (e *Engine) ChildCompleted(ctx context.Context, childAggregateType, childAg
 // bypassing normal transition rules and guards.
 func (e *Engine) ForceState(ctx context.Context, aggregateType, aggregateID, targetState, actorID, reason string) (*types.TransitionResult, error) {
 	return e.inner.ForceState(ctx, aggregateType, aggregateID, targetState, actorID, reason)
+}
+
+// Shutdown gracefully stops the engine. Waits for in-flight operations to complete.
+func (e *Engine) Shutdown(ctx context.Context) error {
+	return e.inner.Shutdown(ctx)
 }

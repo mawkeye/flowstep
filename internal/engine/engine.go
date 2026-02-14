@@ -5,6 +5,8 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/mawkeye/flowstate/types"
@@ -34,6 +36,7 @@ type Deps struct {
 	ErrNoMatchingRoute   error
 	ErrTaskNotFound      error
 	ErrInvalidChoice     error
+	ErrEngineShutdown    error
 }
 
 // EventStore interface (mirrors root, avoids import cycle).
@@ -113,6 +116,9 @@ type Engine struct {
 	deps     Deps
 	versions map[string]map[int]*types.Definition // key: aggregateType -> version -> def
 	latest   map[string]*types.Definition          // key: aggregateType -> latest def
+
+	shutdown atomic.Bool
+	wg       sync.WaitGroup
 }
 
 // New creates a new Engine with the given dependencies.
@@ -122,6 +128,20 @@ func New(deps Deps) *Engine {
 		versions: make(map[string]map[int]*types.Definition),
 		latest:   make(map[string]*types.Definition),
 	}
+}
+
+// Shutdown gracefully stops the engine. Waits for in-flight operations to complete.
+func (e *Engine) Shutdown(_ context.Context) error {
+	e.shutdown.Store(true)
+	e.wg.Wait()
+	return nil
+}
+
+func (e *Engine) checkShutdown() error {
+	if e.shutdown.Load() {
+		return fmt.Errorf("flowstate: engine is shut down: %w", e.deps.ErrEngineShutdown)
+	}
+	return nil
 }
 
 // Register adds a workflow definition to the engine.
@@ -162,6 +182,12 @@ func (e *Engine) Transition(
 	actorID string,
 	params map[string]any,
 ) (*types.TransitionResult, error) {
+	if err := e.checkShutdown(); err != nil {
+		return nil, err
+	}
+	e.wg.Add(1)
+	defer e.wg.Done()
+
 	start := e.deps.Clock.Now()
 
 	// 1. Load or create workflow instance, then resolve the correct definition version
@@ -415,6 +441,10 @@ func (e *Engine) Transition(
 
 // Signal sends a signal to trigger a matching OnSignal transition.
 func (e *Engine) Signal(ctx context.Context, input types.SignalInput) (*types.TransitionResult, error) {
+	if err := e.checkShutdown(); err != nil {
+		return nil, err
+	}
+
 	// Load or create instance, then resolve definition version
 	instance, err := e.deps.InstanceStore.Get(ctx, input.TargetAggregateType, input.TargetAggregateID)
 	var def *types.Definition
@@ -467,6 +497,9 @@ func (e *Engine) Signal(ctx context.Context, input types.SignalInput) (*types.Tr
 // CompleteTask completes a pending task and fires the matching OnTaskCompleted transition.
 // The choice determines which transition fires when multiple OnTaskCompleted transitions exist.
 func (e *Engine) CompleteTask(ctx context.Context, taskID, choice, actorID string) (*types.TransitionResult, error) {
+	if err := e.checkShutdown(); err != nil {
+		return nil, err
+	}
 	if e.deps.TaskStore == nil {
 		return nil, fmt.Errorf("flowstate: TaskStore not configured")
 	}
@@ -539,6 +572,9 @@ func (e *Engine) CompleteTask(ctx context.Context, taskID, choice, actorID strin
 // For single children, it fires OnChildCompleted. For grouped children, it evaluates
 // the join policy and fires OnChildrenJoined when satisfied.
 func (e *Engine) ChildCompleted(ctx context.Context, childAggregateType, childAggregateID, terminalState string) (*types.TransitionResult, error) {
+	if err := e.checkShutdown(); err != nil {
+		return nil, err
+	}
 	if e.deps.ChildStore == nil {
 		return nil, fmt.Errorf("flowstate: ChildStore not configured")
 	}
@@ -649,6 +685,10 @@ func (e *Engine) evaluateJoinPolicy(
 // ForceState is an admin recovery operation that bypasses normal transition rules.
 // It moves a workflow instance to any state, including from terminal states.
 func (e *Engine) ForceState(ctx context.Context, aggregateType, aggregateID, targetState, actorID, reason string) (*types.TransitionResult, error) {
+	if err := e.checkShutdown(); err != nil {
+		return nil, err
+	}
+
 	// Load instance (must exist)
 	instance, err := e.deps.InstanceStore.Get(ctx, aggregateType, aggregateID)
 	if err != nil {

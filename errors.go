@@ -23,6 +23,7 @@ var (
 	ErrAlreadyTerminal        = errors.New("flowstate: workflow already in terminal state")
 	ErrWorkflowStuck          = errors.New("flowstate: workflow is stuck")
 	ErrConcurrentModification = errors.New("flowstate: concurrent modification detected")
+	ErrEngineShutdown         = errors.New("flowstate: engine is shut down")
 )
 
 // Signal errors.

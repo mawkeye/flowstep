@@ -1409,6 +1409,49 @@ func TestEngineForceStateFromTerminal(t *testing.T) {
 	}
 }
 
+func TestEngineShutdown(t *testing.T) {
+	h := newTestHarness(t)
+	def, err := flowstate.Define("order", "simple").
+		Version(1).
+		States(
+			flowstate.Initial("CREATED"),
+			flowstate.Terminal("DONE"),
+		).
+		Transition("complete",
+			flowstate.From("CREATED"),
+			flowstate.To("DONE"),
+			flowstate.Event("OrderCompleted"),
+		).
+		Build()
+	if err != nil {
+		t.Fatalf("build failed: %v", err)
+	}
+
+	h.engine.Register(def)
+	ctx := context.Background()
+
+	// Normal operation works
+	_, err = h.engine.Transition(ctx, "order", "o-1", "complete", "user-1", nil)
+	if err != nil {
+		t.Fatalf("transition failed: %v", err)
+	}
+
+	// Shutdown the engine
+	err = h.engine.Shutdown(ctx)
+	if err != nil {
+		t.Fatalf("shutdown failed: %v", err)
+	}
+
+	// After shutdown, transitions should fail
+	_, err = h.engine.Transition(ctx, "order", "o-2", "complete", "user-1", nil)
+	if err == nil {
+		t.Error("expected error after shutdown")
+	}
+	if !errors.Is(err, flowstate.ErrEngineShutdown) {
+		t.Errorf("expected ErrEngineShutdown, got: %v", err)
+	}
+}
+
 // Ensure interfaces are compatible
 var _ types.Guard = (*alwaysFailGuard)(nil)
 var _ types.Guard = (*passingGuard)(nil)

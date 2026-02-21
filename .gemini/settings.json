@@ -1,0 +1,19 @@
+{ 
+  "general": {
+    "enableAutoUpdate": true,
+    "sessionRetention": {
+      "enabled": true,
+      "maxAge": "30d"
+    },
+    "previewFeatures": true,
+    "checkpointing": {
+        "enabled": true
+    }
+  },
+  "tools": {
+    "core": ["ReadFileTool", "GlobTool", "ShellTool(ls)"]
+  },
+  "context": {
+    "fileName": ["AGENTS.md", "GEMINI.md"]
+  },
+}

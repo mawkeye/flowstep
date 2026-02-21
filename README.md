@@ -29,6 +29,7 @@ The package requires a minimum version of Go 1.25.
   - [Fixture Workflows](#fixture-workflows)
 - [Error Handling](#error-handling)
   - [Sentinel Errors](#sentinel-errors)
+- [License](#license)
 
 
 ## Features
@@ -108,7 +109,9 @@ func main() {
     }
     defer engine.Shutdown(context.Background())
 
-    engine.Register(def)
+    if err := engine.Register(def); err != nil {
+        log.Fatal(err)
+    }
 
     // 3. Execute transitions
     ctx := context.Background()
@@ -489,7 +492,9 @@ func TestMyWorkflow(t *testing.T) {
     te := testutil.NewTestEngine(t)
 
     def := buildMyWorkflow(t)
-    te.Engine.Register(def)
+    if err := te.Engine.Register(def); err != nil {
+        t.Fatal(err)
+    }
 
     ctx := context.Background()
 
@@ -568,3 +573,22 @@ if err != nil {
 | `ErrActivityNotRegistered` | Activity name not registered with the runner |
 | `ErrEngineShutdown` | Engine has been shut down |
 
+
+## License
+
+This project is licensed under the [GNU General Public License v3.0](LICENSE).
+
+```
+Court Command - Multi-tenant sports facility management platform
+Copyright (C) 2026
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU General Public License for more details.
+```

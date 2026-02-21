@@ -115,7 +115,7 @@ type Hooks interface {
 type Engine struct {
 	deps     Deps
 	versions map[string]map[int]*types.Definition // key: aggregateType -> version -> def
-	latest   map[string]*types.Definition          // key: aggregateType -> latest def
+	latest   map[string]*types.Definition         // key: aggregateType -> latest def
 
 	shutdown atomic.Bool
 	wg       sync.WaitGroup
@@ -148,7 +148,7 @@ func (e *Engine) checkShutdown() error {
 // If a definition with the same aggregate type already exists, the newer version
 // becomes the default for new instances. Existing instances continue using their
 // creation version.
-func (e *Engine) Register(def *types.Definition) {
+func (e *Engine) Register(def *types.Definition) error {
 	if _, ok := e.versions[def.AggregateType]; !ok {
 		e.versions[def.AggregateType] = make(map[int]*types.Definition)
 	}
@@ -158,6 +158,7 @@ func (e *Engine) Register(def *types.Definition) {
 	if cur, ok := e.latest[def.AggregateType]; !ok || def.Version >= cur.Version {
 		e.latest[def.AggregateType] = def
 	}
+	return nil
 }
 
 // definitionFor returns the definition for the given aggregate type and version.
@@ -327,7 +328,7 @@ func (e *Engine) Transition(
 				RetryPolicy: actDef.RetryPolicy,
 				Timeout:     actDef.Timeout,
 				Status:      types.ActivityStatusScheduled,
-				MaxAttempts:  1,
+				MaxAttempts: 1,
 				ScheduledAt: now,
 			}
 

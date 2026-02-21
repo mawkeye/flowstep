@@ -67,8 +67,8 @@ func NewEngine(opts ...Option) (*Engine, error) {
 }
 
 // Register adds a workflow definition to the engine.
-func (e *Engine) Register(def *types.Definition) {
-	e.inner.Register(def)
+func (e *Engine) Register(def *types.Definition) error {
+	return e.inner.Register(def)
 }
 
 // Transition executes a named transition for the given aggregate.

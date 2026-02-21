@@ -123,7 +123,7 @@ func (s *ActivityStore) ListByAggregate(ctx context.Context, aggregateType, aggr
 		SELECT id, activity_name, workflow_type, aggregate_type, aggregate_id,
 		       correlation_id, mode, input, output, error_msg, retry_policy,
 		       timeout, status, max_attempts, attempt_count,
-		       scheduled_at, started_at, completed_at
+		       scheduled_at, started_at, completed_at, next_retry_at
 		FROM flowstate_activities
 		WHERE aggregate_type = $1 AND aggregate_id = $2
 		ORDER BY scheduled_at`, aggregateType, aggregateID)
@@ -132,6 +132,61 @@ func (s *ActivityStore) ListByAggregate(ctx context.Context, aggregateType, aggr
 	}
 	defer rows.Close()
 
+	return s.scanActivities(rows)
+}
+
+func (s *ActivityStore) ListPending(ctx context.Context) ([]types.ActivityInvocation, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, activity_name, workflow_type, aggregate_type, aggregate_id,
+		       correlation_id, mode, input, output, error_msg, retry_policy,
+		       timeout, status, max_attempts, attempt_count,
+		       scheduled_at, started_at, completed_at, next_retry_at
+		FROM flowstate_activities
+		WHERE status = 'SCHEDULED'
+		ORDER BY scheduled_at`)
+	if err != nil {
+		return nil, fmt.Errorf("pgxstore: list pending activities: %w", err)
+	}
+	defer rows.Close()
+
+	return s.scanActivities(rows)
+}
+
+func (s *ActivityStore) ListFailed(ctx context.Context) ([]types.ActivityInvocation, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, activity_name, workflow_type, aggregate_type, aggregate_id,
+		       correlation_id, mode, input, output, error_msg, retry_policy,
+		       timeout, status, max_attempts, attempt_count,
+		       scheduled_at, started_at, completed_at, next_retry_at
+		FROM flowstate_activities
+		WHERE status = 'FAILED'
+		ORDER BY scheduled_at`)
+	if err != nil {
+		return nil, fmt.Errorf("pgxstore: list failed activities: %w", err)
+	}
+	defer rows.Close()
+
+	return s.scanActivities(rows)
+}
+
+func (s *ActivityStore) ListRetryable(ctx context.Context) ([]types.ActivityInvocation, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, activity_name, workflow_type, aggregate_type, aggregate_id,
+		       correlation_id, mode, input, output, error_msg, retry_policy,
+		       timeout, status, max_attempts, attempt_count,
+		       scheduled_at, started_at, completed_at, next_retry_at
+		FROM flowstate_activities
+		WHERE status = 'SCHEDULED' AND next_retry_at <= NOW()
+		ORDER BY scheduled_at`)
+	if err != nil {
+		return nil, fmt.Errorf("pgxstore: list retryable activities: %w", err)
+	}
+	defer rows.Close()
+
+	return s.scanActivities(rows)
+}
+
+func (s *ActivityStore) scanActivities(rows pgx.Rows) ([]types.ActivityInvocation, error) {
 	var invocations []types.ActivityInvocation
 	for rows.Next() {
 		var inv types.ActivityInvocation
@@ -140,13 +195,14 @@ func (s *ActivityStore) ListByAggregate(ctx context.Context, aggregateType, aggr
 		var timeout int64
 		var errorMsg string
 		var attempts int
+		var nextRetryAt *time.Time
 
 		err := rows.Scan(
 			&inv.ID, &inv.ActivityName, &inv.WorkflowType,
 			&inv.AggregateType, &inv.AggregateID, &inv.CorrelationID,
 			&mode, &input, &output, &errorMsg, &retryPolicy,
 			&timeout, &inv.Status, &inv.MaxAttempts, &attempts,
-			&inv.ScheduledAt, &inv.StartedAt, &inv.CompletedAt,
+			&inv.ScheduledAt, &inv.StartedAt, &inv.CompletedAt, &nextRetryAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("pgxstore: scan activity: %w", err)
@@ -161,6 +217,7 @@ func (s *ActivityStore) ListByAggregate(ctx context.Context, aggregateType, aggr
 		}
 		_ = json.Unmarshal(retryPolicy, &inv.RetryPolicy)
 		inv.Timeout = time.Duration(timeout)
+		inv.NextRetryAt = nextRetryAt
 		invocations = append(invocations, inv)
 	}
 	return invocations, rows.Err()

@@ -8,13 +8,14 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/mawkeye/flowstate"
 	"github.com/mawkeye/flowstate/types"
 )
 
 // InstanceStore implements flowstate.InstanceStore using PostgreSQL.
 type InstanceStore struct {
-	pool            *pgxpool.Pool
-	errNotFound     error
+	pool        *pgxpool.Pool
+	errNotFound error
 }
 
 // NewInstanceStore creates a new PostgreSQL InstanceStore.
@@ -83,7 +84,7 @@ func (s *InstanceStore) Update(ctx context.Context, tx any, instance types.Workf
 	}
 
 	stateData, _ := json.Marshal(instance.StateData)
-	_, err = pgxTx.Exec(ctx, `
+	tag, err := pgxTx.Exec(ctx, `
 		UPDATE flowstate_instances
 		SET current_state = $1, state_data = $2, is_stuck = $3, stuck_reason = $4,
 		    retry_count = $5, updated_at = $6
@@ -94,6 +95,9 @@ func (s *InstanceStore) Update(ctx context.Context, tx any, instance types.Workf
 	)
 	if err != nil {
 		return fmt.Errorf("pgxstore: update instance: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("pgxstore: update instance: %w", flowstate.ErrConcurrentModification)
 	}
 	return nil
 }

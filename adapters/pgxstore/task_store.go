@@ -101,6 +101,42 @@ func (s *TaskStore) GetByAggregate(ctx context.Context, aggregateType, aggregate
 	}
 	defer rows.Close()
 
+	return s.scanTasks(rows)
+}
+
+func (s *TaskStore) ListPending(ctx context.Context) ([]types.PendingTask, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, workflow_type, aggregate_type, aggregate_id, correlation_id,
+		       task_type, description, options, status, choice, completed_by,
+		       timeout, expires_at, created_at
+		FROM flowstate_tasks
+		WHERE status = 'PENDING'
+		ORDER BY created_at`)
+	if err != nil {
+		return nil, fmt.Errorf("pgxstore: list pending tasks: %w", err)
+	}
+	defer rows.Close()
+
+	return s.scanTasks(rows)
+}
+
+func (s *TaskStore) ListExpired(ctx context.Context) ([]types.PendingTask, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, workflow_type, aggregate_type, aggregate_id, correlation_id,
+		       task_type, description, options, status, choice, completed_by,
+		       timeout, expires_at, created_at
+		FROM flowstate_tasks
+		WHERE status = 'PENDING' AND expires_at < NOW()
+		ORDER BY created_at`)
+	if err != nil {
+		return nil, fmt.Errorf("pgxstore: list expired tasks: %w", err)
+	}
+	defer rows.Close()
+
+	return s.scanTasks(rows)
+}
+
+func (s *TaskStore) scanTasks(rows pgx.Rows) ([]types.PendingTask, error) {
 	var tasks []types.PendingTask
 	for rows.Next() {
 		var task types.PendingTask

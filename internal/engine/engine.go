@@ -117,6 +117,7 @@ type Engine struct {
 	versions map[string]map[int]*types.Definition // key: aggregateType -> version -> def
 	latest   map[string]*types.Definition         // key: aggregateType -> latest def
 
+	mu       sync.RWMutex
 	shutdown atomic.Bool
 	wg       sync.WaitGroup
 }
@@ -149,6 +150,9 @@ func (e *Engine) checkShutdown() error {
 // becomes the default for new instances. Existing instances continue using their
 // creation version.
 func (e *Engine) Register(def *types.Definition) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
 	if _, ok := e.versions[def.AggregateType]; !ok {
 		e.versions[def.AggregateType] = make(map[int]*types.Definition)
 	}
@@ -163,7 +167,11 @@ func (e *Engine) Register(def *types.Definition) error {
 
 // definitionFor returns the definition for the given aggregate type and version.
 // If version is 0, returns the latest version.
+// Callers do not need to hold any lock — this method acquires RLock internally.
 func (e *Engine) definitionFor(aggregateType string, version int) (*types.Definition, bool) {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
 	if version > 0 {
 		if versions, ok := e.versions[aggregateType]; ok {
 			def, ok := versions[version]
@@ -445,6 +453,8 @@ func (e *Engine) Signal(ctx context.Context, input types.SignalInput) (*types.Tr
 	if err := e.checkShutdown(); err != nil {
 		return nil, err
 	}
+	e.wg.Add(1)
+	defer e.wg.Done()
 
 	// Load or create instance, then resolve definition version
 	instance, err := e.deps.InstanceStore.Get(ctx, input.TargetAggregateType, input.TargetAggregateID)
@@ -576,6 +586,9 @@ func (e *Engine) ChildCompleted(ctx context.Context, childAggregateType, childAg
 	if err := e.checkShutdown(); err != nil {
 		return nil, err
 	}
+	e.wg.Add(1)
+	defer e.wg.Done()
+
 	if e.deps.ChildStore == nil {
 		return nil, fmt.Errorf("flowstate: ChildStore not configured")
 	}
@@ -689,6 +702,8 @@ func (e *Engine) ForceState(ctx context.Context, aggregateType, aggregateID, tar
 	if err := e.checkShutdown(); err != nil {
 		return nil, err
 	}
+	e.wg.Add(1)
+	defer e.wg.Done()
 
 	// Load instance (must exist)
 	instance, err := e.deps.InstanceStore.Get(ctx, aggregateType, aggregateID)

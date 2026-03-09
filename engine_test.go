@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -1446,6 +1447,138 @@ func TestEngineShutdown(t *testing.T) {
 	_, err = h.engine.Transition(ctx, "order", "o-2", "complete", "user-1", nil)
 	if err == nil {
 		t.Error("expected error after shutdown")
+	}
+	if !errors.Is(err, flowstate.ErrEngineShutdown) {
+		t.Errorf("expected ErrEngineShutdown, got: %v", err)
+	}
+}
+
+// TestEngineConcurrentRegister verifies no data race when Register is called
+// concurrently with Transition (which calls definitionFor). Must be run with -race.
+func TestEngineConcurrentRegister(t *testing.T) {
+	def1, err := flowstate.Define("order", "v1").
+		Version(1).
+		States(
+			flowstate.Initial("CREATED"),
+			flowstate.Terminal("DONE"),
+		).
+		Transition("complete", flowstate.From("CREATED"), flowstate.To("DONE"), flowstate.Event("Completed")).
+		Build()
+	if err != nil {
+		t.Fatalf("build def1: %v", err)
+	}
+	def2, err := flowstate.Define("order", "v2").
+		Version(2).
+		States(
+			flowstate.Initial("CREATED"),
+			flowstate.Terminal("DONE"),
+		).
+		Transition("complete", flowstate.From("CREATED"), flowstate.To("DONE"), flowstate.Event("Completed")).
+		Build()
+	if err != nil {
+		t.Fatalf("build def2: %v", err)
+	}
+
+	h := newTestHarness(t)
+	if err := h.engine.Register(def1); err != nil {
+		t.Fatalf("register def1: %v", err)
+	}
+
+	ctx := context.Background()
+	var wg sync.WaitGroup
+
+	// Concurrently register new versions
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 50; i++ {
+			if err := h.engine.Register(def2); err != nil {
+				return
+			}
+		}
+	}()
+
+	// Concurrently trigger transitions (calls definitionFor internally)
+	for i := 0; i < 50; i++ {
+		_, _ = h.engine.Transition(ctx, "order", fmt.Sprintf("concurrent-%d", i), "complete", "user", nil)
+	}
+
+	wg.Wait()
+}
+
+// TestEngineSignalReturnsErrEngineShutdown verifies Signal returns ErrEngineShutdown after Shutdown.
+func TestEngineSignalReturnsErrEngineShutdown(t *testing.T) {
+	def, err := flowstate.Define("order", "signal-test").
+		Version(1).
+		States(
+			flowstate.Initial("WAITING"),
+			flowstate.Terminal("DONE"),
+		).
+		Transition("done",
+			flowstate.From("WAITING"),
+			flowstate.To("DONE"),
+			flowstate.OnSignal("finish"),
+			flowstate.Event("Finished"),
+		).
+		Build()
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+
+	h := newTestHarness(t)
+	if err := h.engine.Register(def); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	ctx := context.Background()
+
+	// Create the instance first
+	_, err = h.engine.Transition(ctx, "order", "sig-1", "done", "user", nil)
+	// Transition via signal-driven transition from WAITING state
+	// Instead, let's use Signal after Shutdown
+	if err := h.engine.Shutdown(ctx); err != nil {
+		t.Fatalf("shutdown: %v", err)
+	}
+
+	_, err = h.engine.Signal(ctx, types.SignalInput{
+		TargetAggregateType: "order",
+		TargetAggregateID:   "sig-1",
+		SignalName:          "finish",
+	})
+	if err == nil {
+		t.Fatal("expected error from Signal after shutdown")
+	}
+	if !errors.Is(err, flowstate.ErrEngineShutdown) {
+		t.Errorf("expected ErrEngineShutdown, got: %v", err)
+	}
+}
+
+// TestEngineForceStateReturnsErrEngineShutdown verifies ForceState returns ErrEngineShutdown after Shutdown.
+func TestEngineForceStateReturnsErrEngineShutdown(t *testing.T) {
+	def, err := flowstate.Define("order", "force-test").
+		Version(1).
+		States(
+			flowstate.Initial("CREATED"),
+			flowstate.Terminal("DONE"),
+		).
+		Transition("complete", flowstate.From("CREATED"), flowstate.To("DONE"), flowstate.Event("Completed")).
+		Build()
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+
+	h := newTestHarness(t)
+	if err := h.engine.Register(def); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	ctx := context.Background()
+
+	if err := h.engine.Shutdown(ctx); err != nil {
+		t.Fatalf("shutdown: %v", err)
+	}
+
+	_, err = h.engine.ForceState(ctx, "order", "f-1", "DONE", "admin", "test")
+	if err == nil {
+		t.Fatal("expected error from ForceState after shutdown")
 	}
 	if !errors.Is(err, flowstate.ErrEngineShutdown) {
 		t.Errorf("expected ErrEngineShutdown, got: %v", err)

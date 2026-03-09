@@ -65,29 +65,31 @@ func TestInstanceStoreOptimisticLocking(t *testing.T) {
 		t.Fatalf("create failed: %v", err)
 	}
 
-	// First update with correct lock succeeds
-	lock := &OptimisticLock{LastReadAt: now}
-	inst.CurrentState = "PAID"
-	inst.UpdatedAt = now.Add(time.Second)
-	if err := store.Update(ctx, lock, inst); err != nil {
-		t.Fatalf("first update failed: %v", err)
+	// Stale LastReadUpdatedAt → concurrent modification
+	stale := inst
+	stale.CurrentState = "PAID"
+	stale.LastReadUpdatedAt = now.Add(-time.Second) // wrong — stored is `now`
+	stale.UpdatedAt = now.Add(time.Second)
+	if err := store.Update(ctx, nil, stale); !errors.Is(err, flowstate.ErrConcurrentModification) {
+		t.Errorf("expected ErrConcurrentModification for stale read, got %v", err)
 	}
 
-	// Second update with stale lock fails (stored UpdatedAt is now+1s, but lock says now)
-	staleLock := &OptimisticLock{LastReadAt: now}
-	inst.CurrentState = "SHIPPED"
-	inst.UpdatedAt = now.Add(2 * time.Second)
-	err := store.Update(ctx, staleLock, inst)
-	if !errors.Is(err, flowstate.ErrConcurrentModification) {
-		t.Errorf("expected ErrConcurrentModification, got %v", err)
+	// Correct LastReadUpdatedAt → success
+	good := inst
+	good.CurrentState = "PAID"
+	good.LastReadUpdatedAt = now // matches stored UpdatedAt
+	good.UpdatedAt = now.Add(time.Second)
+	if err := store.Update(ctx, nil, good); err != nil {
+		t.Fatalf("update with correct LastReadUpdatedAt failed: %v", err)
 	}
 
-	// Update with correct lock succeeds
-	correctLock := &OptimisticLock{LastReadAt: now.Add(time.Second)}
-	inst.CurrentState = "SHIPPED"
-	inst.UpdatedAt = now.Add(2 * time.Second)
-	if err := store.Update(ctx, correctLock, inst); err != nil {
-		t.Fatalf("update with correct lock failed: %v", err)
+	// Zero LastReadUpdatedAt → bypass locking (used for brand-new instances)
+	bypass := good
+	bypass.CurrentState = "SHIPPED"
+	bypass.LastReadUpdatedAt = time.Time{} // zero value → skip check
+	bypass.UpdatedAt = now.Add(2 * time.Second)
+	if err := store.Update(ctx, nil, bypass); err != nil {
+		t.Fatalf("update with zero LastReadUpdatedAt (bypass) failed: %v", err)
 	}
 }
 

@@ -61,11 +61,18 @@ func New(deps Deps) *Engine {
 	}
 }
 
-// Shutdown gracefully stops the engine. Waits for in-flight operations to complete.
-func (e *Engine) Shutdown(_ context.Context) error {
+// Shutdown gracefully stops the engine. Waits for in-flight operations to complete,
+// or returns ctx.Err() if the context is cancelled first.
+func (e *Engine) Shutdown(ctx context.Context) error {
 	e.shutdown.Store(true)
-	e.wg.Wait()
-	return nil
+	done := make(chan struct{})
+	go func() { e.wg.Wait(); close(done) }()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func (e *Engine) checkShutdown() error {

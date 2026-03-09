@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"sync"
-	"time"
 
 	"github.com/mawkeye/flowstate"
 	"github.com/mawkeye/flowstate/types"
@@ -45,17 +44,10 @@ func (s *InstanceStore) Create(_ context.Context, _ any, instance types.Workflow
 	return nil
 }
 
-// Update persists instance changes with optimistic locking.
-// The caller must pass the instance with UpdatedAt set to the NEW timestamp.
-// The store compares the STORED UpdatedAt with the OLD value.
-// Convention: caller reads instance, modifies it, sets a new UpdatedAt, then calls Update.
-// The store needs to know the old UpdatedAt to compare — we store it and compare
-// against what was last written. The engine must set UpdatedAt to a new value
-// before calling Update, so the stored value != new value after success.
-//
-// Simplified approach: the store compares stored.UpdatedAt with the passed lastReadAt.
-// We use a wrapper to pass the old timestamp via the tx parameter.
-func (s *InstanceStore) Update(_ context.Context, tx any, instance types.WorkflowInstance) error {
+// Update persists instance changes with optimistic locking via instance.LastReadUpdatedAt.
+// The engine sets instance.LastReadUpdatedAt = instance.UpdatedAt before any mutations.
+// If LastReadUpdatedAt is zero, the locking check is skipped (used for brand-new instances).
+func (s *InstanceStore) Update(_ context.Context, _ any, instance types.WorkflowInstance) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	k := key(instance.AggregateType, instance.AggregateID)
@@ -64,21 +56,13 @@ func (s *InstanceStore) Update(_ context.Context, tx any, instance types.Workflo
 		return flowstate.ErrInstanceNotFound
 	}
 
-	// tx carries the lastReadAt timestamp for optimistic locking.
-	// If tx is an OptimisticLock, use it. Otherwise skip locking (for simple cases).
-	if lock, ok := tx.(*OptimisticLock); ok {
-		if !existing.UpdatedAt.Equal(lock.LastReadAt) {
-			return flowstate.ErrConcurrentModification
-		}
+	// Skip locking for zero LastReadUpdatedAt (new instances not yet re-read).
+	if !instance.LastReadUpdatedAt.IsZero() && !existing.UpdatedAt.Equal(instance.LastReadUpdatedAt) {
+		return flowstate.ErrConcurrentModification
 	}
 
 	s.instances[k] = instance
 	return nil
-}
-
-// OptimisticLock carries the last-read timestamp for optimistic locking.
-type OptimisticLock struct {
-	LastReadAt time.Time
 }
 
 func (s *InstanceStore) ListStuck(_ context.Context) ([]types.WorkflowInstance, error) {

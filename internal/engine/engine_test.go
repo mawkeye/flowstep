@@ -324,8 +324,8 @@ func TestRunGuards_firstFailureReturnsErrGuardFailed(t *testing.T) {
 		Guards: []types.Guard{&failingGuard{"blocked"}},
 	}
 	err := e.runGuards(context.Background(), "my-workflow", tr, nil, nil)
-	if !errors.Is(err, errGuardFailed) {
-		t.Errorf("expected errGuardFailed, got %v", err)
+	if !errors.Is(err, types.ErrGuardFailed) {
+		t.Errorf("expected types.ErrGuardFailed, got %v", err)
 	}
 	if hooks.guardFailedWorkflow != "my-workflow" {
 		t.Errorf("expected OnGuardFailed called with workflow=my-workflow, got %q", hooks.guardFailedWorkflow)

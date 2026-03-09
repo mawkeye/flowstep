@@ -1,6 +1,10 @@
 package flowstate
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/mawkeye/flowstate/types"
+)
 
 // Definition errors (Build time).
 var (
@@ -18,7 +22,7 @@ var (
 var (
 	ErrInstanceNotFound       = errors.New("flowstate: workflow instance not found")
 	ErrInvalidTransition      = errors.New("flowstate: transition not valid from current state")
-	ErrGuardFailed            = errors.New("flowstate: guard check failed")
+	ErrGuardFailed            = types.ErrGuardFailed
 	ErrNoMatchingRoute        = errors.New("flowstate: no condition matched and no default")
 	ErrAlreadyTerminal        = errors.New("flowstate: workflow already in terminal state")
 	ErrWorkflowStuck          = errors.New("flowstate: workflow is stuck")
@@ -47,20 +51,7 @@ var (
 	ErrActivityNotFound      = errors.New("flowstate: activity invocation not found")
 )
 
-// GuardError wraps a guard failure with the guard name and reason.
-type GuardError struct {
-	GuardName string
-	Reason    error
-}
-
-func (e *GuardError) Error() string {
-	return "flowstate: guard " + e.GuardName + " failed: " + e.Reason.Error()
-}
-
-func (e *GuardError) Is(target error) bool {
-	return target == ErrGuardFailed
-}
-
-func (e *GuardError) Unwrap() error {
-	return e.Reason
-}
+// GuardError is a type alias for types.GuardError. The engine returns *GuardError
+// for guard failures so callers can use errors.As to extract the guard name and
+// reason, and errors.Is against ErrGuardFailed.
+type GuardError = types.GuardError

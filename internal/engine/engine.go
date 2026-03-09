@@ -864,7 +864,7 @@ func (e *Engine) runGuards(ctx context.Context, workflowType string, tr types.Tr
 		if err := guard.Check(ctx, aggregate, params); err != nil {
 			guardName := fmt.Sprintf("%T", guard)
 			e.deps.Hooks.OnGuardFailed(ctx, workflowType, tr.Name, guardName, err)
-			return fmt.Errorf("flowstate: guard failed: %w", e.deps.ErrGuardFailed)
+			return &types.GuardError{GuardName: guardName, Reason: err}
 		}
 	}
 	return nil

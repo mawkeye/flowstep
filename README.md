@@ -29,6 +29,7 @@ The package requires a minimum version of Go 1.25.
   - [Fixture Workflows](#fixture-workflows)
 - [Error Handling](#error-handling)
   - [Sentinel Errors](#sentinel-errors)
+- [Examples](#examples)
 - [License](#license)
 
 
@@ -458,11 +459,13 @@ srv.Run(mux)
 Generate a Mermaid state diagram from any definition:
 
 ```go
+import "github.com/mawkeye/flowstate/types"
+
 def, _ := flowstate.Define("order", "order_workflow").
     // ... states and transitions ...
     Build()
 
-fmt.Println(def.Mermaid())
+fmt.Println(types.Mermaid(def))
 ```
 
 Output:
@@ -538,11 +541,8 @@ result, err := engine.Transition(ctx, "order", "o-1", "complete", "user-1", nil)
 if err != nil {
     switch {
     case errors.Is(err, flowstate.ErrGuardFailed):
-        // Precondition not met — inspect the GuardError for details
-        var ge *flowstate.GuardError
-        if errors.As(err, &ge) {
-            fmt.Printf("Guard %q failed: %v\n", ge.GuardName, ge.Reason)
-        }
+        // Precondition not met — guard failure details are reported via
+        // the Hooks.OnGuardFailed callback registered on the engine.
     case errors.Is(err, flowstate.ErrInvalidTransition):
         // Transition not valid from the current state
     case errors.Is(err, flowstate.ErrAlreadyTerminal):
@@ -564,22 +564,46 @@ if err != nil {
 | `ErrGuardFailed` | A guard precondition check failed |
 | `ErrNoMatchingRoute` | No condition matched and no default route |
 | `ErrAlreadyTerminal` | Workflow already in a terminal state |
+| `ErrWorkflowStuck` | Workflow is stuck and cannot proceed |
 | `ErrConcurrentModification` | Optimistic lock conflict |
 | `ErrNoMatchingSignal` | No transition matches the signal |
+| `ErrSignalAmbiguous` | Multiple transitions match the same signal |
 | `ErrTaskNotFound` | Pending task does not exist |
 | `ErrTaskExpired` | Task has passed its timeout |
 | `ErrTaskAlreadyCompleted` | Task was already completed |
 | `ErrInvalidChoice` | Choice not in the task's options list |
 | `ErrActivityNotRegistered` | Activity name not registered with the runner |
+| `ErrActivityTimeout` | Activity timed out before completing |
+| `ErrActivityNotFound` | Activity invocation not found |
 | `ErrEngineShutdown` | Engine has been shut down |
 
+
+## Examples
+
+The `examples/` folder contains standalone runnable programs covering all features from simple to complex:
+
+| Example | Features |
+|---------|----------|
+| [`01-basic-linear`](examples/01-basic-linear/main.go) | Workflow definition, engine setup, basic transitions |
+| [`02-guards-and-routing`](examples/02-guards-and-routing/main.go) | Guard preconditions, conditional routing with `When`/`Default` |
+| [`03-signals`](examples/03-signals/main.go) | External signal triggers (`OnSignal`, `engine.Signal`) |
+| [`04-wait-states-tasks`](examples/04-wait-states-tasks/main.go) | Human-in-the-loop approval with wait states and tasks |
+| [`05-child-workflow`](examples/05-child-workflow/main.go) | Parent/child workflows with `SpawnChild` and `OnChildCompleted` |
+| [`06-parallel-children-signals`](examples/06-parallel-children-signals/main.go) | Parallel fan-out with `JoinAll`, join policy, and signal-based confirmation |
+
+Run any example from the module root:
+
+```bash
+go run ./examples/01-basic-linear/
+go run ./examples/06-parallel-children-signals/
+```
 
 ## License
 
 This project is licensed under the [GNU General Public License v3.0](LICENSE).
 
 ```
-Court Command - Multi-tenant sports facility management platform
+flowstate - A declarative workflow engine for Go
 Copyright (C) 2026
 
 This program is free software: you can redistribute it and/or modify

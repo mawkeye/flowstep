@@ -53,50 +53,69 @@ func (s *InstanceStore) Get(ctx context.Context, aggregateType, aggregateID stri
 }
 
 func (s *InstanceStore) Create(ctx context.Context, tx any, instance types.WorkflowInstance) error {
-	pgxTx, err := getTx(tx)
-	if err != nil {
-		return err
-	}
-
-	stateData, _ := json.Marshal(instance.StateData)
-	_, err = pgxTx.Exec(ctx, `
+	const q = `
 		INSERT INTO flowstate_instances
 			(id, workflow_type, workflow_version, aggregate_type, aggregate_id,
 			 current_state, state_data, correlation_id, is_stuck, stuck_reason,
 			 retry_count, created_at, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`
+
+	stateData, _ := json.Marshal(instance.StateData)
+	args := []any{
 		instance.ID, instance.WorkflowType, instance.WorkflowVersion,
 		instance.AggregateType, instance.AggregateID,
 		instance.CurrentState, stateData, instance.CorrelationID,
 		instance.IsStuck, instance.StuckReason, instance.RetryCount,
 		instance.CreatedAt, instance.UpdatedAt,
-	)
+	}
+
+	pgxTx, err := getTx(tx)
 	if err != nil {
-		return fmt.Errorf("pgxstore: create instance: %w", err)
+		// nil tx: execute directly on the pool (e.g. in tests)
+		if _, execErr := s.pool.Exec(ctx, q, args...); execErr != nil {
+			return fmt.Errorf("pgxstore: create instance: %w", execErr)
+		}
+		return nil
+	}
+	if _, execErr := pgxTx.Exec(ctx, q, args...); execErr != nil {
+		return fmt.Errorf("pgxstore: create instance: %w", execErr)
 	}
 	return nil
 }
 
 func (s *InstanceStore) Update(ctx context.Context, tx any, instance types.WorkflowInstance) error {
-	pgxTx, err := getTx(tx)
-	if err != nil {
-		return err
-	}
-
-	stateData, _ := json.Marshal(instance.StateData)
-	tag, err := pgxTx.Exec(ctx, `
+	const q = `
 		UPDATE flowstate_instances
 		SET current_state = $1, state_data = $2, is_stuck = $3, stuck_reason = $4,
 		    retry_count = $5, updated_at = $6
-		WHERE aggregate_type = $7 AND aggregate_id = $8`,
+		WHERE aggregate_type = $7 AND aggregate_id = $8 AND updated_at = $9`
+
+	stateData, _ := json.Marshal(instance.StateData)
+	args := []any{
 		instance.CurrentState, stateData, instance.IsStuck, instance.StuckReason,
 		instance.RetryCount, instance.UpdatedAt,
 		instance.AggregateType, instance.AggregateID,
-	)
-	if err != nil {
-		return fmt.Errorf("pgxstore: update instance: %w", err)
+		instance.LastReadUpdatedAt,
 	}
-	if tag.RowsAffected() == 0 {
+
+	var rowsAffected int64
+	pgxTx, err := getTx(tx)
+	if err != nil {
+		// nil tx: execute directly on the pool (e.g. in tests)
+		tag, execErr := s.pool.Exec(ctx, q, args...)
+		if execErr != nil {
+			return fmt.Errorf("pgxstore: update instance: %w", execErr)
+		}
+		rowsAffected = tag.RowsAffected()
+	} else {
+		tag, execErr := pgxTx.Exec(ctx, q, args...)
+		if execErr != nil {
+			return fmt.Errorf("pgxstore: update instance: %w", execErr)
+		}
+		rowsAffected = tag.RowsAffected()
+	}
+
+	if rowsAffected == 0 {
 		return fmt.Errorf("pgxstore: update instance: %w", flowstate.ErrConcurrentModification)
 	}
 	return nil

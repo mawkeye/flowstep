@@ -283,7 +283,7 @@ func (e *Engine) Transition(
 
 	// 9. Update instance
 	previousState := instance.CurrentState
-	oldUpdatedAt := instance.UpdatedAt
+	instance.LastReadUpdatedAt = instance.UpdatedAt // snapshot before modification for optimistic locking
 	instance.CurrentState = targetState
 	instance.UpdatedAt = now
 
@@ -298,10 +298,6 @@ func (e *Engine) Transition(
 		return nil, fmt.Errorf("flowstate: append event: %w", err)
 	}
 
-	// For new instances, create; for existing, update with optimistic lock
-	if previousState == def.InitialState && oldUpdatedAt.Equal(instance.CreatedAt) {
-		// This was just created by loadOrCreate — update it
-	}
 	if err := e.deps.InstanceStore.Update(ctx, tx, *instance); err != nil {
 		_ = e.deps.TxProvider.Rollback(ctx, tx)
 		return nil, fmt.Errorf("flowstate: update instance: %w", err)
@@ -773,6 +769,7 @@ func (e *Engine) ForceState(ctx context.Context, aggregateType, aggregateID, tar
 	}
 
 	// Update instance
+	instance.LastReadUpdatedAt = instance.UpdatedAt // snapshot for optimistic locking
 	instance.CurrentState = targetState
 	instance.IsStuck = false
 	instance.StuckReason = ""

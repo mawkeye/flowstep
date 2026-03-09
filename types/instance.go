@@ -18,4 +18,8 @@ type WorkflowInstance struct {
 	RetryCount      int
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
+	// LastReadUpdatedAt is set by the engine before modifying UpdatedAt.
+	// Store adapters use it as the expected current updated_at in their
+	// optimistic locking WHERE clause. Not persisted (json:"-").
+	LastReadUpdatedAt time.Time `json:"-"`
 }

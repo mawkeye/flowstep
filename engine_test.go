@@ -1174,6 +1174,7 @@ func (h *recordingHooks) OnActivityDispatched(_ context.Context, inv types.Activ
 func (h *recordingHooks) OnActivityCompleted(context.Context, types.ActivityInvocation, *types.ActivityResult) {}
 func (h *recordingHooks) OnActivityFailed(context.Context, types.ActivityInvocation, error)                    {}
 func (h *recordingHooks) OnStuck(context.Context, types.WorkflowInstance, string)                              {}
+func (h *recordingHooks) OnPostCommitError(context.Context, string, error)                                     {}
 
 func TestEngineHooksCalledOnTransition(t *testing.T) {
 	hooks := &recordingHooks{}
@@ -1582,6 +1583,79 @@ func TestEngineForceStateReturnsErrEngineShutdown(t *testing.T) {
 	}
 	if !errors.Is(err, flowstate.ErrEngineShutdown) {
 		t.Errorf("expected ErrEngineShutdown, got: %v", err)
+	}
+}
+
+// failingEventBus always returns an error from Emit.
+type failingEventBus struct{ err error }
+
+func (b *failingEventBus) Emit(_ context.Context, _ types.DomainEvent) error { return b.err }
+
+// captureHooks records OnPostCommitError calls.
+type captureHooks struct {
+	flowstate.NoopHooks
+	postCommitErrors []flowstate.PostCommitWarning
+}
+
+func (h *captureHooks) OnPostCommitError(_ context.Context, operation string, err error) {
+	h.postCommitErrors = append(h.postCommitErrors, flowstate.PostCommitWarning{Operation: operation, Err: err})
+}
+
+func TestEngineOnPostCommitErrorHookFires(t *testing.T) {
+	def, err := flowstate.Define("order", "hook-test").
+		Version(1).
+		States(
+			flowstate.Initial("CREATED"),
+			flowstate.Terminal("DONE"),
+		).
+		Transition("complete", flowstate.From("CREATED"), flowstate.To("DONE"), flowstate.Event("Completed")).
+		Build()
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+
+	busErr := fmt.Errorf("bus unavailable")
+	hooks := &captureHooks{}
+	es := memstore.NewEventStore()
+	is := memstore.NewInstanceStore()
+	engine, err := flowstate.NewEngine(
+		flowstate.WithEventStore(es),
+		flowstate.WithInstanceStore(is),
+		flowstate.WithTxProvider(memstore.NewTxProvider()),
+		flowstate.WithEventBus(&failingEventBus{err: busErr}),
+		flowstate.WithClock(flowstate.RealClock{}),
+		flowstate.WithHooks(hooks),
+	)
+	if err != nil {
+		t.Fatalf("create engine: %v", err)
+	}
+	if err := engine.Register(def); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	ctx := context.Background()
+	result, err := engine.Transition(ctx, "order", "o-hook-1", "complete", "user", nil)
+	if err != nil {
+		t.Fatalf("transition failed: %v", err)
+	}
+
+	// Hook should have fired once for EventBus.Emit
+	if len(hooks.postCommitErrors) != 1 {
+		t.Fatalf("expected 1 post-commit error, got %d", len(hooks.postCommitErrors))
+	}
+	if hooks.postCommitErrors[0].Operation != "EventBus.Emit" {
+		t.Errorf("expected operation 'EventBus.Emit', got %q", hooks.postCommitErrors[0].Operation)
+	}
+	if !errors.Is(hooks.postCommitErrors[0].Err, busErr) {
+		t.Errorf("expected bus error, got %v", hooks.postCommitErrors[0].Err)
+	}
+
+	// TransitionResult should contain the warning
+	if len(result.Warnings) != 1 {
+		t.Fatalf("expected 1 warning in result, got %d", len(result.Warnings))
+	}
+	if result.Warnings[0].Operation != "EventBus.Emit" {
+		t.Errorf("expected warning operation 'EventBus.Emit', got %q", result.Warnings[0].Operation)
 	}
 }
 

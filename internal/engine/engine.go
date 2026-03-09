@@ -5,6 +5,8 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -109,6 +111,7 @@ type Hooks interface {
 	OnActivityCompleted(ctx context.Context, invocation types.ActivityInvocation, result *types.ActivityResult)
 	OnActivityFailed(ctx context.Context, invocation types.ActivityInvocation, err error)
 	OnStuck(ctx context.Context, instance types.WorkflowInstance, reason string)
+	OnPostCommitError(ctx context.Context, operation string, err error)
 }
 
 // Engine executes workflow state transitions.
@@ -308,9 +311,15 @@ func (e *Engine) Transition(
 		return nil, fmt.Errorf("flowstate: commit tx: %w", err)
 	}
 
-	// 11. Post-commit: emit event
+	// 11. Post-commit: collect warnings from non-fatal failures
+	var warnings []types.PostCommitWarning
+
+	// Emit event
 	if e.deps.EventBus != nil {
-		_ = e.deps.EventBus.Emit(ctx, event)
+		if emitErr := e.deps.EventBus.Emit(ctx, event); emitErr != nil {
+			warnings = append(warnings, types.PostCommitWarning{Operation: "EventBus.Emit", Err: emitErr})
+			e.deps.Hooks.OnPostCommitError(ctx, "EventBus.Emit", emitErr)
+		}
 	}
 
 	// 12. Post-commit: dispatch activities
@@ -346,13 +355,20 @@ func (e *Engine) Transition(
 
 			// Store invocation
 			if e.deps.ActivityStore != nil {
-				_ = e.deps.ActivityStore.Create(ctx, nil, invocation)
+				if createErr := e.deps.ActivityStore.Create(ctx, nil, invocation); createErr != nil {
+					warnings = append(warnings, types.PostCommitWarning{Operation: "ActivityStore.Create", Err: createErr})
+					e.deps.Hooks.OnPostCommitError(ctx, "ActivityStore.Create", createErr)
+				}
 			}
 
 			// Dispatch to runner
-			_ = e.deps.ActivityRunner.Dispatch(ctx, invocation)
-			activitiesDispatched = append(activitiesDispatched, actDef.Name)
-			e.deps.Hooks.OnActivityDispatched(ctx, invocation)
+			if dispatchErr := e.deps.ActivityRunner.Dispatch(ctx, invocation); dispatchErr != nil {
+				warnings = append(warnings, types.PostCommitWarning{Operation: "ActivityRunner.Dispatch", Err: dispatchErr})
+				e.deps.Hooks.OnPostCommitError(ctx, "ActivityRunner.Dispatch", dispatchErr)
+			} else {
+				activitiesDispatched = append(activitiesDispatched, actDef.Name)
+				e.deps.Hooks.OnActivityDispatched(ctx, invocation)
+			}
 		}
 	}
 
@@ -376,8 +392,12 @@ func (e *Engine) Transition(
 			expiresAt := now.Add(tr.TaskDef.Timeout)
 			task.ExpiresAt = expiresAt
 		}
-		_ = e.deps.TaskStore.Create(ctx, nil, task)
-		taskCreated = &task
+		if createErr := e.deps.TaskStore.Create(ctx, nil, task); createErr != nil {
+			warnings = append(warnings, types.PostCommitWarning{Operation: "TaskStore.Create", Err: createErr})
+			e.deps.Hooks.OnPostCommitError(ctx, "TaskStore.Create", createErr)
+		} else {
+			taskCreated = &task
+		}
 	}
 
 	// 14. Post-commit: spawn child workflow(s)
@@ -396,8 +416,12 @@ func (e *Engine) Transition(
 			Status:              "ACTIVE",
 			CreatedAt:           now,
 		}
-		_ = e.deps.ChildStore.Create(ctx, nil, relation)
-		childrenSpawned = append(childrenSpawned, relation)
+		if createErr := e.deps.ChildStore.Create(ctx, nil, relation); createErr != nil {
+			warnings = append(warnings, types.PostCommitWarning{Operation: "ChildStore.Create", Err: createErr})
+			e.deps.Hooks.OnPostCommitError(ctx, "ChildStore.Create", createErr)
+		} else {
+			childrenSpawned = append(childrenSpawned, relation)
+		}
 	}
 	if tr.ChildrenDef != nil && e.deps.ChildStore != nil {
 		groupID := generateID()
@@ -418,8 +442,12 @@ func (e *Engine) Transition(
 				Status:              "ACTIVE",
 				CreatedAt:           now,
 			}
-			_ = e.deps.ChildStore.Create(ctx, nil, relation)
-			childrenSpawned = append(childrenSpawned, relation)
+			if createErr := e.deps.ChildStore.Create(ctx, nil, relation); createErr != nil {
+				warnings = append(warnings, types.PostCommitWarning{Operation: "ChildStore.Create", Err: createErr})
+				e.deps.Hooks.OnPostCommitError(ctx, "ChildStore.Create", createErr)
+			} else {
+				childrenSpawned = append(childrenSpawned, relation)
+			}
 		}
 	}
 
@@ -439,6 +467,7 @@ func (e *Engine) Transition(
 		TaskCreated:          taskCreated,
 		ChildrenSpawned:      childrenSpawned,
 		IsTerminal:           isTerminal,
+		Warnings:             warnings,
 	}
 
 	// 15. Post-commit: hooks
@@ -766,9 +795,13 @@ func (e *Engine) ForceState(ctx context.Context, aggregateType, aggregateID, tar
 		return nil, fmt.Errorf("flowstate: commit tx: %w", err)
 	}
 
-	// Emit event
+	// Post-commit: emit event
+	var forceWarnings []types.PostCommitWarning
 	if e.deps.EventBus != nil {
-		_ = e.deps.EventBus.Emit(ctx, event)
+		if emitErr := e.deps.EventBus.Emit(ctx, event); emitErr != nil {
+			forceWarnings = append(forceWarnings, types.PostCommitWarning{Operation: "EventBus.Emit", Err: emitErr})
+			e.deps.Hooks.OnPostCommitError(ctx, "EventBus.Emit", emitErr)
+		}
 	}
 
 	isTerminal := false
@@ -783,6 +816,7 @@ func (e *Engine) ForceState(ctx context.Context, aggregateType, aggregateID, tar
 		NewState:       targetState,
 		TransitionName: "_force_state",
 		IsTerminal:     isTerminal,
+		Warnings:       forceWarnings,
 	}, nil
 }
 
@@ -857,12 +891,7 @@ func (e *Engine) runGuards(ctx context.Context, workflowType string, tr types.Tr
 }
 
 func containsSource(sources []string, state string) bool {
-	for _, s := range sources {
-		if s == state {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(sources, state)
 }
 
 func generateID() string {
@@ -876,8 +905,6 @@ func copyMap(m map[string]any) map[string]any {
 		return nil
 	}
 	cp := make(map[string]any, len(m))
-	for k, v := range m {
-		cp[k] = v
-	}
+	maps.Copy(cp, m)
 	return cp
 }

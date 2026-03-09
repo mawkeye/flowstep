@@ -8,8 +8,9 @@ import (
 
 // Re-export builder option types for the public API.
 type (
-	TransitionOption = builder.TransitionOption
-	StateOption      = builder.StateOption
+	TransitionOption  = builder.TransitionOption
+	StateOption       = builder.StateOption
+	PostCommitWarning = types.PostCommitWarning
 )
 
 // Re-export builder functions for the fluent API.

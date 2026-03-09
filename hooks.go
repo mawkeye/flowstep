@@ -16,14 +16,19 @@ type Hooks interface {
 	OnActivityCompleted(ctx context.Context, invocation types.ActivityInvocation, result *types.ActivityResult)
 	OnActivityFailed(ctx context.Context, invocation types.ActivityInvocation, err error)
 	OnStuck(ctx context.Context, instance types.WorkflowInstance, reason string)
+	// OnPostCommitError is called when a post-commit operation (e.g. EventBus.Emit,
+	// ActivityRunner.Dispatch) fails. The transition is still considered successful
+	// because the state change has been committed. Implementations must be non-blocking.
+	OnPostCommitError(ctx context.Context, operation string, err error)
 }
 
 // NoopHooks is the default Hooks implementation. Does nothing.
 type NoopHooks struct{}
 
-func (NoopHooks) OnTransition(context.Context, types.TransitionResult, time.Duration)              {}
-func (NoopHooks) OnGuardFailed(context.Context, string, string, string, error)                      {}
-func (NoopHooks) OnActivityDispatched(context.Context, types.ActivityInvocation)                     {}
+func (NoopHooks) OnTransition(context.Context, types.TransitionResult, time.Duration)                {}
+func (NoopHooks) OnGuardFailed(context.Context, string, string, string, error)                       {}
+func (NoopHooks) OnActivityDispatched(context.Context, types.ActivityInvocation)                      {}
 func (NoopHooks) OnActivityCompleted(context.Context, types.ActivityInvocation, *types.ActivityResult) {}
-func (NoopHooks) OnActivityFailed(context.Context, types.ActivityInvocation, error)                  {}
-func (NoopHooks) OnStuck(context.Context, types.WorkflowInstance, string)                            {}
+func (NoopHooks) OnActivityFailed(context.Context, types.ActivityInvocation, error)                   {}
+func (NoopHooks) OnStuck(context.Context, types.WorkflowInstance, string)                             {}
+func (NoopHooks) OnPostCommitError(context.Context, string, error)                                    {}

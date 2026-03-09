@@ -9,18 +9,19 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/mawkeye/flowstate"
 	"github.com/mawkeye/flowstate/types"
 )
 
 // ActivityStore implements flowstate.ActivityStore using PostgreSQL.
 type ActivityStore struct {
-	pool *pgxpool.Pool
+	pool        *pgxpool.Pool
+	errNotFound error
 }
 
 // NewActivityStore creates a new PostgreSQL ActivityStore.
-func NewActivityStore(pool *pgxpool.Pool) *ActivityStore {
-	return &ActivityStore{pool: pool}
+// errNotFound is the sentinel error to return when an activity invocation is not found.
+func NewActivityStore(pool *pgxpool.Pool, errNotFound error) *ActivityStore {
+	return &ActivityStore{pool: pool, errNotFound: errNotFound}
 }
 
 func (s *ActivityStore) Create(ctx context.Context, tx any, inv types.ActivityInvocation) error {
@@ -83,7 +84,7 @@ func (s *ActivityStore) Get(ctx context.Context, invocationID string) (*types.Ac
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, fmt.Errorf("pgxstore: get activity: %w", flowstate.ErrActivityNotFound)
+			return nil, fmt.Errorf("pgxstore: get activity: %w", s.errNotFound)
 		}
 		return nil, fmt.Errorf("pgxstore: get activity: %w", err)
 	}

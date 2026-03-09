@@ -77,6 +77,18 @@ func (p *TxProvider) Commit(ctx context.Context, tx any) error {
 		TransactItems: t.items,
 	})
 	if err != nil {
+		// DynamoDB evaluates ConditionExpressions at commit time for transactional writes.
+		// When an instance Update's condition fails (stale optimistic lock), DynamoDB returns
+		// TransactionCanceledException with a ConditionalCheckFailed cancellation reason.
+		// Map this to ErrConcurrentModification so callers see the same error as the non-tx path.
+		var txCanceled *ddbtypes.TransactionCanceledException
+		if errors.As(err, &txCanceled) {
+			for _, reason := range txCanceled.CancellationReasons {
+				if reason.Code != nil && *reason.Code == "ConditionalCheckFailed" {
+					return fmt.Errorf("dynamostore: commit tx: %w", flowstate.ErrConcurrentModification)
+				}
+			}
+		}
 		return fmt.Errorf("dynamostore: commit tx: %w", err)
 	}
 	return nil

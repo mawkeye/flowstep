@@ -2,11 +2,13 @@ package pgxstore_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/mawkeye/flowstate"
 	"github.com/mawkeye/flowstate/adapters/pgxstore"
 	"github.com/mawkeye/flowstate/types"
 )
@@ -29,7 +31,7 @@ func TestActivityStore_ListMethods(t *testing.T) {
 		t.Fatalf("failed to truncate activities: %v", err)
 	}
 
-	store := pgxstore.NewActivityStore(pool)
+	store := pgxstore.NewActivityStore(pool, flowstate.ErrActivityNotFound)
 	now := time.Now().UTC()
 
 	// 1. Pending (freshly scheduled, no retry time set)
@@ -152,7 +154,7 @@ func TestActivityStore_Lifecycle(t *testing.T) {
 	}
 	defer pool.Close()
 
-	store := pgxstore.NewActivityStore(pool)
+	store := pgxstore.NewActivityStore(pool, flowstate.ErrActivityNotFound)
 	inv := types.ActivityInvocation{
 		ID:            "lifecycle_act",
 		ActivityName:  "act",
@@ -184,5 +186,11 @@ func TestActivityStore_Lifecycle(t *testing.T) {
 	got2, _ := store.Get(ctx, "lifecycle_act")
 	if got2.Status != "COMPLETED" {
 		t.Errorf("expected COMPLETED, got %s", got2.Status)
+	}
+
+	// Get with non-existent ID must return ErrActivityNotFound sentinel
+	_, notFoundErr := store.Get(ctx, "non-existent-activity-id")
+	if !errors.Is(notFoundErr, flowstate.ErrActivityNotFound) {
+		t.Errorf("expected ErrActivityNotFound for missing activity, got %v", notFoundErr)
 	}
 }

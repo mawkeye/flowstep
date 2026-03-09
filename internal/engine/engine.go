@@ -535,6 +535,8 @@ func (e *Engine) CompleteTask(ctx context.Context, taskID, choice, actorID strin
 	if err := e.checkShutdown(); err != nil {
 		return nil, err
 	}
+	e.wg.Add(1)
+	defer e.wg.Done()
 	if e.deps.TaskStore == nil {
 		return nil, fmt.Errorf("flowstate: TaskStore not configured")
 	}
@@ -624,7 +626,9 @@ func (e *Engine) ChildCompleted(ctx context.Context, childAggregateType, childAg
 	}
 
 	// Mark child as completed
-	_ = e.deps.ChildStore.Complete(ctx, nil, childAggregateType, childAggregateID, terminalState)
+	if completeErr := e.deps.ChildStore.Complete(ctx, nil, childAggregateType, childAggregateID, terminalState); completeErr != nil {
+		e.deps.Hooks.OnPostCommitError(ctx, "ChildStore.Complete", completeErr)
+	}
 
 	// Load parent instance
 	instance, err := e.deps.InstanceStore.Get(ctx, relation.ParentAggregateType, relation.ParentAggregateID)

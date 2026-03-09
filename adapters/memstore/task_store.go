@@ -89,6 +89,8 @@ func (s *TaskStore) ListPending(_ context.Context) ([]types.PendingTask, error) 
 func (s *TaskStore) ListExpired(_ context.Context) ([]types.PendingTask, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	// Uses the wall clock (time.Now) because the store interface does not accept
+	// a timestamp parameter. Expiry checks will use wall time even with a mock clock.
 	now := time.Now()
 	var result []types.PendingTask
 	for _, t := range s.tasks {

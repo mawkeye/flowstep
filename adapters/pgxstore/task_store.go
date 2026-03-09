@@ -9,18 +9,19 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/mawkeye/flowstate"
 	"github.com/mawkeye/flowstate/types"
 )
 
 // TaskStore implements flowstate.TaskStore using PostgreSQL.
 type TaskStore struct {
-	pool *pgxpool.Pool
+	pool        *pgxpool.Pool
+	errNotFound error
 }
 
 // NewTaskStore creates a new PostgreSQL TaskStore.
-func NewTaskStore(pool *pgxpool.Pool) *TaskStore {
-	return &TaskStore{pool: pool}
+// errNotFound is the sentinel error to return when a task is not found.
+func NewTaskStore(pool *pgxpool.Pool, errNotFound error) *TaskStore {
+	return &TaskStore{pool: pool, errNotFound: errNotFound}
 }
 
 func (s *TaskStore) Create(ctx context.Context, tx any, task types.PendingTask) error {
@@ -77,7 +78,7 @@ func (s *TaskStore) Get(ctx context.Context, taskID string) (*types.PendingTask,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, fmt.Errorf("pgxstore: get task: %w", flowstate.ErrTaskNotFound)
+			return nil, fmt.Errorf("pgxstore: get task: %w", s.errNotFound)
 		}
 		return nil, fmt.Errorf("pgxstore: get task: %w", err)
 	}

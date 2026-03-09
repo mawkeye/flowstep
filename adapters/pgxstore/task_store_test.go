@@ -2,11 +2,13 @@ package pgxstore_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/mawkeye/flowstate"
 	"github.com/mawkeye/flowstate/adapters/pgxstore"
 	"github.com/mawkeye/flowstate/types"
 )
@@ -29,7 +31,7 @@ func TestTaskStore_ListPendingAndExpired(t *testing.T) {
 		t.Fatalf("failed to truncate tasks: %v", err)
 	}
 
-	store := pgxstore.NewTaskStore(pool)
+	store := pgxstore.NewTaskStore(pool, flowstate.ErrTaskNotFound)
 	now := time.Now().UTC()
 
 	// 1. Pending task, future expiration (not expired)
@@ -140,7 +142,7 @@ func TestTaskStore_Lifecycle(t *testing.T) {
 	}
 	defer pool.Close()
 
-	store := pgxstore.NewTaskStore(pool)
+	store := pgxstore.NewTaskStore(pool, flowstate.ErrTaskNotFound)
 	task := types.PendingTask{
 		ID:            "lifecycle_task",
 		WorkflowType:  "wf",
@@ -171,5 +173,11 @@ func TestTaskStore_Lifecycle(t *testing.T) {
 	got2, _ := store.Get(ctx, "lifecycle_task")
 	if got2.Status != "COMPLETED" || got2.Choice != "approve" {
 		t.Errorf("expected COMPLETED/approve, got %s/%s", got2.Status, got2.Choice)
+	}
+
+	// Get with non-existent ID must return ErrTaskNotFound sentinel
+	_, notFoundErr := store.Get(ctx, "non-existent-task-id")
+	if !errors.Is(notFoundErr, flowstate.ErrTaskNotFound) {
+		t.Errorf("expected ErrTaskNotFound for missing task, got %v", notFoundErr)
 	}
 }

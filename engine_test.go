@@ -1659,6 +1659,39 @@ func TestEngineOnPostCommitErrorHookFires(t *testing.T) {
 	}
 }
 
+// TestEngineCompleteTaskReturnsErrEngineShutdown verifies CompleteTask returns ErrEngineShutdown after Shutdown.
+func TestEngineCompleteTaskReturnsErrEngineShutdown(t *testing.T) {
+	def, err := flowstate.Define("order", "completetask-shutdown-test").
+		Version(1).
+		States(
+			flowstate.Initial("CREATED"),
+			flowstate.Terminal("DONE"),
+		).
+		Transition("complete", flowstate.From("CREATED"), flowstate.To("DONE"), flowstate.Event("Completed")).
+		Build()
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+
+	h := newTestHarness(t)
+	if err := h.engine.Register(def); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	ctx := context.Background()
+
+	if err := h.engine.Shutdown(ctx); err != nil {
+		t.Fatalf("shutdown: %v", err)
+	}
+
+	_, err = h.engine.CompleteTask(ctx, "some-task-id", "approve", "user1")
+	if err == nil {
+		t.Fatal("expected error from CompleteTask after shutdown")
+	}
+	if !errors.Is(err, flowstate.ErrEngineShutdown) {
+		t.Errorf("expected ErrEngineShutdown, got: %v", err)
+	}
+}
+
 // Ensure interfaces are compatible
 var _ types.Guard = (*alwaysFailGuard)(nil)
 var _ types.Guard = (*passingGuard)(nil)

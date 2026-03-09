@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/mawkeye/flowstate"
 	"github.com/mawkeye/flowstate/types"
 )
 
@@ -208,17 +209,21 @@ func (s *InstanceStore) Update(ctx context.Context, tx any, instance types.Workf
 		isStuck = 1
 	}
 
-	_, err := sqlTx.ExecContext(ctx, `
+	result, err := sqlTx.ExecContext(ctx, `
 		UPDATE flowstate_instances
 		SET current_state = ?, state_data = ?, is_stuck = ?, stuck_reason = ?,
 		    retry_count = ?, updated_at = ?
-		WHERE aggregate_type = ? AND aggregate_id = ?`,
+		WHERE aggregate_type = ? AND aggregate_id = ? AND updated_at = ?`,
 		instance.CurrentState, string(stateData), isStuck, instance.StuckReason,
 		instance.RetryCount, instance.UpdatedAt.Format(time.RFC3339Nano),
 		instance.AggregateType, instance.AggregateID,
+		instance.LastReadUpdatedAt.Format(time.RFC3339Nano),
 	)
 	if err != nil {
 		return fmt.Errorf("sqlitestore: update instance: %w", err)
+	}
+	if n, _ := result.RowsAffected(); n == 0 {
+		return fmt.Errorf("sqlitestore: update instance: %w", flowstate.ErrConcurrentModification)
 	}
 	return nil
 }

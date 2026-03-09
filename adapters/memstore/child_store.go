@@ -68,6 +68,9 @@ func (s *ChildStore) Complete(_ context.Context, _ any, childAggregateType, chil
 	defer s.mu.Unlock()
 	for i, c := range s.children {
 		if c.ChildAggregateType == childAggregateType && c.ChildAggregateID == childAggregateID {
+			// CompletedAt uses the wall clock (time.Now) because the store interface
+			// does not accept a timestamp parameter. For production use, prefer a store
+			// backed by a database that records the commit time server-side.
 			now := time.Now()
 			s.children[i].Status = "COMPLETED"
 			s.children[i].ChildTerminalState = terminalState

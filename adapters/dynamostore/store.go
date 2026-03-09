@@ -19,6 +19,7 @@ package dynamostore
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -26,6 +27,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	ddbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+	"github.com/mawkeye/flowstate"
 	"github.com/mawkeye/flowstate/types"
 )
 
@@ -248,7 +250,47 @@ func (s *Store) Create(ctx context.Context, tx any, instance types.WorkflowInsta
 }
 
 func (s *Store) Update(ctx context.Context, tx any, instance types.WorkflowInstance) error {
-	return s.Create(ctx, tx, instance) // DynamoDB PutItem is an upsert
+	item, err := attributevalue.MarshalMap(instance)
+	if err != nil {
+		return fmt.Errorf("dynamostore: marshal instance: %w", err)
+	}
+	item["PK"] = &ddbtypes.AttributeValueMemberS{Value: fmt.Sprintf("INST#%s#%s", instance.AggregateType, instance.AggregateID)}
+	item["SK"] = &ddbtypes.AttributeValueMemberS{Value: "INSTANCE"}
+	item["Type"] = &ddbtypes.AttributeValueMemberS{Value: "Instance"}
+
+	oldUpdatedAt := instance.LastReadUpdatedAt.Format(time.RFC3339Nano)
+	condExpr := aws.String("UpdatedAt = :oldUpdatedAt")
+	exprValues := map[string]ddbtypes.AttributeValue{
+		":oldUpdatedAt": &ddbtypes.AttributeValueMemberS{Value: oldUpdatedAt},
+	}
+
+	if tx != nil {
+		t := tx.(*ddbTx)
+		t.items = append(t.items, ddbtypes.TransactWriteItem{
+			Put: &ddbtypes.Put{
+				TableName:                 aws.String(s.tableName),
+				Item:                      item,
+				ConditionExpression:       condExpr,
+				ExpressionAttributeValues: exprValues,
+			},
+		})
+		return nil
+	}
+
+	_, putErr := s.client.PutItem(ctx, &dynamodb.PutItemInput{
+		TableName:                 aws.String(s.tableName),
+		Item:                      item,
+		ConditionExpression:       condExpr,
+		ExpressionAttributeValues: exprValues,
+	})
+	if putErr != nil {
+		var condFailed *ddbtypes.ConditionalCheckFailedException
+		if errors.As(putErr, &condFailed) {
+			return fmt.Errorf("dynamostore: update instance: %w", flowstate.ErrConcurrentModification)
+		}
+		return fmt.Errorf("dynamostore: update instance: %w", putErr)
+	}
+	return nil
 }
 
 func (s *Store) ListStuck(ctx context.Context) ([]types.WorkflowInstance, error) {

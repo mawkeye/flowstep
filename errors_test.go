@@ -32,6 +32,8 @@ func TestSentinelErrors(t *testing.T) {
 		ErrInvalidChoice,
 		ErrActivityNotRegistered,
 		ErrActivityTimeout,
+		ErrActivityNotFound,
+		ErrEngineShutdown,
 	}
 
 	for i, a := range sentinels {

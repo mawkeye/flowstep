@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/mawkeye/flowstate"
 	"github.com/mawkeye/flowstate/types"
 )
 
@@ -82,7 +83,7 @@ func (s *ActivityStore) Get(ctx context.Context, invocationID string) (*types.Ac
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, fmt.Errorf("pgxstore: activity not found")
+			return nil, fmt.Errorf("pgxstore: get activity: %w", flowstate.ErrActivityNotFound)
 		}
 		return nil, fmt.Errorf("pgxstore: get activity: %w", err)
 	}

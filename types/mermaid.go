@@ -26,17 +26,30 @@ func (d *Definition) Mermaid() string {
 	for _, name := range names {
 		tr := d.Transitions[name]
 		for _, src := range tr.Sources {
-			target := tr.Target
-			if target == "" {
-				continue
+			if tr.Target != "" {
+				// Direct transition
+				b.WriteString("    ")
+				b.WriteString(src)
+				b.WriteString(" --> ")
+				b.WriteString(tr.Target)
+				b.WriteString(" : ")
+				b.WriteString(name)
+				b.WriteString("\n")
+			} else {
+				// Routed transition — render an edge for each possible route target
+				for _, route := range tr.Routes {
+					if route.Target == "" {
+						continue
+					}
+					b.WriteString("    ")
+					b.WriteString(src)
+					b.WriteString(" --> ")
+					b.WriteString(route.Target)
+					b.WriteString(" : ")
+					b.WriteString(name)
+					b.WriteString("\n")
+				}
 			}
-			b.WriteString("    ")
-			b.WriteString(src)
-			b.WriteString(" --> ")
-			b.WriteString(target)
-			b.WriteString(" : ")
-			b.WriteString(name)
-			b.WriteString("\n")
 		}
 	}
 

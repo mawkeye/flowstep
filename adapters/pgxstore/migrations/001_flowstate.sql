@@ -105,7 +105,8 @@ CREATE TABLE IF NOT EXISTS flowstate_activities (
     attempt_count   INT DEFAULT 0,
     scheduled_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     started_at      TIMESTAMPTZ,
-    completed_at    TIMESTAMPTZ
+    completed_at    TIMESTAMPTZ,
+    next_retry_at   TIMESTAMPTZ
 );
 
 CREATE INDEX IF NOT EXISTS idx_activities_aggregate

@@ -62,6 +62,9 @@ func (s *TaskStore) Complete(_ context.Context, _ any, taskID, choice, actorID s
 	if task.Status == types.TaskStatusCompleted {
 		return flowstate.ErrTaskAlreadyCompleted
 	}
+	// CompletedAt uses the wall clock (time.Now) because the store interface
+	// does not accept a timestamp parameter. For production use, prefer a store
+	// backed by a database that records the commit time server-side.
 	now := time.Now()
 	task.Status = types.TaskStatusCompleted
 	task.Choice = choice

@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/mawkeye/flowstate"
 	"github.com/mawkeye/flowstate/types"
 )
 
@@ -76,7 +77,7 @@ func (s *TaskStore) Get(ctx context.Context, taskID string) (*types.PendingTask,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, fmt.Errorf("pgxstore: task not found")
+			return nil, fmt.Errorf("pgxstore: get task: %w", flowstate.ErrTaskNotFound)
 		}
 		return nil, fmt.Errorf("pgxstore: get task: %w", err)
 	}

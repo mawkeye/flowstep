@@ -44,6 +44,7 @@ var (
 var (
 	ErrActivityNotRegistered = errors.New("flowstate: activity not registered")
 	ErrActivityTimeout       = errors.New("flowstate: activity timed out")
+	ErrActivityNotFound      = errors.New("flowstate: activity invocation not found")
 )
 
 // GuardError wraps a guard failure with the guard name and reason.

@@ -40,6 +40,43 @@ func TestMermaidExport(t *testing.T) {
 	}
 }
 
+func TestMermaidExportRoutedTransitions(t *testing.T) {
+	def := &Definition{
+		AggregateType:  "order",
+		WorkflowType:   "routed",
+		InitialState:   "CREATED",
+		TerminalStates: []string{"APPROVED", "REJECTED"},
+		States: map[string]StateDef{
+			"CREATED":  {Name: "CREATED", IsInitial: true},
+			"APPROVED": {Name: "APPROVED", IsTerminal: true},
+			"REJECTED": {Name: "REJECTED", IsTerminal: true},
+		},
+		Transitions: map[string]TransitionDef{
+			"review": {
+				Name:    "review",
+				Sources: []string{"CREATED"},
+				Routes: []Route{
+					{Target: "APPROVED"},
+					{Target: "REJECTED"},
+					{Target: ""}, // empty target should be skipped
+				},
+			},
+		},
+	}
+
+	diagram := def.Mermaid()
+
+	assertions := []string{
+		"CREATED --> APPROVED : review",
+		"CREATED --> REJECTED : review",
+	}
+	for _, expected := range assertions {
+		if !strings.Contains(diagram, expected) {
+			t.Errorf("expected diagram to contain %q\ngot:\n%s", expected, diagram)
+		}
+	}
+}
+
 func TestMermaidExportMultiSource(t *testing.T) {
 	def := &Definition{
 		AggregateType:  "order",

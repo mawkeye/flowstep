@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
-	"maps"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -902,6 +901,13 @@ func copyMap(m map[string]any) map[string]any {
 		return nil
 	}
 	cp := make(map[string]any, len(m))
-	maps.Copy(cp, m)
+	for k, v := range m {
+		// Recursively deep-copy nested maps so event state snapshots are independent.
+		if nested, ok := v.(map[string]any); ok {
+			cp[k] = copyMap(nested)
+		} else {
+			cp[k] = v
+		}
+	}
 	return cp
 }

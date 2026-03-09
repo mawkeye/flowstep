@@ -1,8 +1,8 @@
 # Project Review & Critical-to-Medium Fixes Implementation Plan
 
 Created: 2026-03-09
-Status: PENDING
-Approved: No
+Status: VERIFIED
+Approved: Yes
 Iterations: 1
 Worktree: No
 Type: Feature
@@ -58,15 +58,15 @@ Type: Feature
 
 ## Progress Tracking
 
-- [ ] Task 1: Add RWMutex to engine for thread-safe Register
-- [ ] Task 2: Add OnPostCommitError hook and surface post-commit failures
-- [ ] Task 3: Fix optimistic locking in pgxstore InstanceStore.Update
-- [ ] Task 4: Fix optimistic locking in sqlitestore and dynamostore InstanceStore.Update
-- [ ] Task 5: Fix migration schema, sentinel errors in pgxstore, and shallow copyMap
-- [ ] Task 6: Fix Mermaid routed transitions and memstore Clock usage
-- [ ] Task 7: Fix ErrEngineShutdown missing from test + dead code cleanup
+- [x] Task 1: Add RWMutex to engine for thread-safe Register
+- [x] Task 2: Add OnPostCommitError hook and surface post-commit failures
+- [x] Task 3: Fix optimistic locking in pgxstore InstanceStore.Update
+- [x] Task 4: Fix optimistic locking in sqlitestore and dynamostore InstanceStore.Update
+- [x] Task 5: Fix migration schema, sentinel errors in pgxstore, and shallow copyMap
+- [x] Task 6: Fix Mermaid routed transitions and memstore Clock usage
+- [x] Task 7: Fix ErrEngineShutdown missing from test + dead code cleanup
 
-**Total Tasks:** 7 | **Completed:** 0 | **Remaining:** 7
+**Total Tasks:** 7 | **Completed:** 7 | **Remaining:** 0
 
 ## Implementation Tasks
 

@@ -1,10 +1,6 @@
 package flowstate
 
-import "context"
+import "github.com/mawkeye/flowstate/types"
 
 // TxProvider manages database transactions.
-type TxProvider interface {
-	Begin(ctx context.Context) (tx any, err error)
-	Commit(ctx context.Context, tx any) error
-	Rollback(ctx context.Context, tx any) error
-}
+type TxProvider = types.TxProvider

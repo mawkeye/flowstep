@@ -9,18 +9,7 @@ import (
 
 // Hooks allows consumers to observe engine behavior.
 // All methods MUST be non-blocking.
-type Hooks interface {
-	OnTransition(ctx context.Context, result types.TransitionResult, duration time.Duration)
-	OnGuardFailed(ctx context.Context, workflowType, transitionName, guardName string, err error)
-	OnActivityDispatched(ctx context.Context, invocation types.ActivityInvocation)
-	OnActivityCompleted(ctx context.Context, invocation types.ActivityInvocation, result *types.ActivityResult)
-	OnActivityFailed(ctx context.Context, invocation types.ActivityInvocation, err error)
-	OnStuck(ctx context.Context, instance types.WorkflowInstance, reason string)
-	// OnPostCommitError is called when a post-commit operation (e.g. EventBus.Emit,
-	// ActivityRunner.Dispatch) fails. The transition is still considered successful
-	// because the state change has been committed. Implementations must be non-blocking.
-	OnPostCommitError(ctx context.Context, operation string, err error)
-}
+type Hooks = types.Hooks
 
 // NoopHooks is the default Hooks implementation. Does nothing.
 type NoopHooks struct{}

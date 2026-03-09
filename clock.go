@@ -1,11 +1,13 @@
 package flowstate
 
-import "time"
+import (
+	"time"
+
+	"github.com/mawkeye/flowstate/types"
+)
 
 // Clock provides deterministic time for the engine.
-type Clock interface {
-	Now() time.Time
-}
+type Clock = types.Clock
 
 // RealClock uses time.Now().
 type RealClock struct{}

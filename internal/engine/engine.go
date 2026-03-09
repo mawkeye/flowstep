@@ -8,24 +8,23 @@ import (
 	"slices"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/mawkeye/flowstate/types"
 )
 
 // Deps holds all external dependencies injected by the root package.
-// This avoids the internal engine importing the root package.
+// All interface types are defined in types/ to avoid circular imports.
 type Deps struct {
-	EventStore     EventStore
-	InstanceStore  InstanceStore
-	TaskStore      TaskStore
-	ChildStore     ChildStore
-	ActivityStore  ActivityStore
-	TxProvider     TxProvider
-	EventBus       EventBus
-	ActivityRunner ActivityRunner
-	Clock          Clock
-	Hooks          Hooks
+	EventStore     types.EventStore
+	InstanceStore  types.InstanceStore
+	TaskStore      types.TaskStore
+	ChildStore     types.ChildStore
+	ActivityStore  types.ActivityStore
+	TxProvider     types.TxProvider
+	EventBus       types.EventBus
+	ActivityRunner types.ActivityRunner
+	Clock          types.Clock
+	Hooks          types.Hooks
 
 	// Sentinel errors from root package
 	ErrInstanceNotFound  error
@@ -38,79 +37,6 @@ type Deps struct {
 	ErrTaskNotFound      error
 	ErrInvalidChoice     error
 	ErrEngineShutdown    error
-}
-
-// EventStore interface (mirrors root, avoids import cycle).
-type EventStore interface {
-	Append(ctx context.Context, tx any, event types.DomainEvent) error
-	ListByCorrelation(ctx context.Context, correlationID string) ([]types.DomainEvent, error)
-	ListByAggregate(ctx context.Context, aggregateType, aggregateID string) ([]types.DomainEvent, error)
-}
-
-// InstanceStore interface.
-type InstanceStore interface {
-	Get(ctx context.Context, aggregateType, aggregateID string) (*types.WorkflowInstance, error)
-	Create(ctx context.Context, tx any, instance types.WorkflowInstance) error
-	Update(ctx context.Context, tx any, instance types.WorkflowInstance) error
-	ListStuck(ctx context.Context) ([]types.WorkflowInstance, error)
-}
-
-// TxProvider interface.
-type TxProvider interface {
-	Begin(ctx context.Context) (tx any, err error)
-	Commit(ctx context.Context, tx any) error
-	Rollback(ctx context.Context, tx any) error
-}
-
-// EventBus interface.
-type EventBus interface {
-	Emit(ctx context.Context, event types.DomainEvent) error
-}
-
-// ChildStore interface.
-type ChildStore interface {
-	Create(ctx context.Context, tx any, relation types.ChildRelation) error
-	GetByChild(ctx context.Context, childAggregateType, childAggregateID string) (*types.ChildRelation, error)
-	GetByParent(ctx context.Context, parentAggregateType, parentAggregateID string) ([]types.ChildRelation, error)
-	GetByGroup(ctx context.Context, groupID string) ([]types.ChildRelation, error)
-	Complete(ctx context.Context, tx any, childAggregateType, childAggregateID, terminalState string) error
-}
-
-// TaskStore interface.
-type TaskStore interface {
-	Create(ctx context.Context, tx any, task types.PendingTask) error
-	Get(ctx context.Context, taskID string) (*types.PendingTask, error)
-	GetByAggregate(ctx context.Context, aggregateType, aggregateID string) ([]types.PendingTask, error)
-	Complete(ctx context.Context, tx any, taskID, choice, actorID string) error
-}
-
-// ActivityStore interface.
-type ActivityStore interface {
-	Create(ctx context.Context, tx any, invocation types.ActivityInvocation) error
-	Get(ctx context.Context, invocationID string) (*types.ActivityInvocation, error)
-	UpdateStatus(ctx context.Context, invocationID, status string, result *types.ActivityResult) error
-	ListByAggregate(ctx context.Context, aggregateType, aggregateID string) ([]types.ActivityInvocation, error)
-}
-
-// ActivityRunner interface.
-type ActivityRunner interface {
-	Dispatch(ctx context.Context, invocation types.ActivityInvocation) error
-}
-
-// Clock interface.
-type Clock interface {
-	Now() time.Time
-}
-
-// Hooks interface.
-type Hooks interface {
-	OnTransition(ctx context.Context, result types.TransitionResult, duration time.Duration)
-	OnGuardFailed(ctx context.Context, workflowType, transitionName, guardName string, err error)
-	OnActivityDispatched(ctx context.Context, invocation types.ActivityInvocation)
-	OnActivityCompleted(ctx context.Context, invocation types.ActivityInvocation, result *types.ActivityResult)
-	OnActivityFailed(ctx context.Context, invocation types.ActivityInvocation, err error)
-	OnStuck(ctx context.Context, instance types.WorkflowInstance, reason string)
-	OnPostCommitError(ctx context.Context, operation string, err error)
 }
 
 // Engine executes workflow state transitions.

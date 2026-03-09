@@ -2,6 +2,7 @@ package graph
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/mawkeye/flowstate/types"
 )
@@ -31,9 +32,6 @@ func Validate(def *types.Definition, sentinels Sentinels) error {
 		return err
 	}
 	if err := checkTerminalStates(def, sentinels); err != nil {
-		return err
-	}
-	if err := checkDuplicateTransitions(def, sentinels); err != nil {
 		return err
 	}
 	if err := checkUnknownStates(def, sentinels); err != nil {
@@ -95,15 +93,6 @@ func checkTerminalStates(def *types.Definition, s Sentinels) error {
 	}
 }
 
-func checkDuplicateTransitions(def *types.Definition, s Sentinels) error {
-	// Transitions are stored in a map, so duplicates are checked during build.
-	// But the builder may overwrite — we need to detect duplicates before map insertion.
-	// This is handled by the builder passing a list; however, the definition already
-	// uses a map. We rely on the builder to detect duplicates before populating the map.
-	// This function is a no-op if the builder handles it correctly.
-	return nil
-}
-
 func checkUnknownStates(def *types.Definition, s Sentinels) error {
 	for name, tr := range def.Transitions {
 		for _, src := range tr.Sources {
@@ -123,6 +112,9 @@ func checkUnknownStates(def *types.Definition, s Sentinels) error {
 			}
 		}
 		for _, route := range tr.Routes {
+			if route.Target == "" {
+				continue
+			}
 			if _, ok := def.States[route.Target]; !ok {
 				return &ValidationError{
 					Sentinel: s.ErrUnknownState,
@@ -149,7 +141,7 @@ func checkReachability(def *types.Definition, s Sentinels) error {
 		queue = queue[1:]
 
 		for _, tr := range def.Transitions {
-			if !containsSource(tr.Sources, current) {
+			if !slices.Contains(tr.Sources, current) {
 				continue
 			}
 			// Direct target
@@ -186,7 +178,7 @@ func checkDeadEnds(def *types.Definition, s Sentinels) error {
 		}
 		hasOutgoing := false
 		for _, tr := range def.Transitions {
-			if containsSource(tr.Sources, name) {
+			if slices.Contains(tr.Sources, name) {
 				hasOutgoing = true
 				break
 			}
@@ -199,13 +191,4 @@ func checkDeadEnds(def *types.Definition, s Sentinels) error {
 		}
 	}
 	return nil
-}
-
-func containsSource(sources []string, state string) bool {
-	for _, s := range sources {
-		if s == state {
-			return true
-		}
-	}
-	return false
 }

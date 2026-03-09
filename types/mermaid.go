@@ -6,7 +6,7 @@ import (
 )
 
 // Mermaid generates a Mermaid stateDiagram-v2 representation of the workflow.
-func (d *Definition) Mermaid() string {
+func Mermaid(d *Definition) string {
 	var b strings.Builder
 	b.WriteString("stateDiagram-v2\n")
 

@@ -23,7 +23,7 @@ func TestMermaidExport(t *testing.T) {
 		},
 	}
 
-	diagram := def.Mermaid()
+	diagram := Mermaid(def)
 
 	assertions := []string{
 		"stateDiagram-v2",
@@ -64,7 +64,7 @@ func TestMermaidExportRoutedTransitions(t *testing.T) {
 		},
 	}
 
-	diagram := def.Mermaid()
+	diagram := Mermaid(def)
 
 	assertions := []string{
 		"CREATED --> APPROVED : review",
@@ -94,7 +94,7 @@ func TestMermaidExportMultiSource(t *testing.T) {
 		},
 	}
 
-	diagram := def.Mermaid()
+	diagram := Mermaid(def)
 
 	if !strings.Contains(diagram, "A --> DONE : finish") {
 		t.Errorf("expected A --> DONE : finish in diagram\ngot:\n%s", diagram)

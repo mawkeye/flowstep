@@ -2,6 +2,12 @@ package types
 
 import "time"
 
+// Child relation status constants.
+const (
+	ChildStatusActive    = "ACTIVE"
+	ChildStatusCompleted = "COMPLETED"
+)
+
 // ChildDef defines a single child workflow to spawn.
 type ChildDef struct {
 	WorkflowType string

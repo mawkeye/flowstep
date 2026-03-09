@@ -754,7 +754,7 @@ func TestIntegration_BookingEventChainCorrelation(t *testing.T) {
 func TestIntegration_BookingMermaidExport(t *testing.T) {
 	def := buildBookingWorkflow(t)
 
-	mermaid := def.Mermaid()
+	mermaid := types.Mermaid(def)
 
 	// Verify it starts with stateDiagram header
 	if !strings.HasPrefix(mermaid, "stateDiagram-v2") {

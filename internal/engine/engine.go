@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"slices"
@@ -161,24 +162,24 @@ func (e *Engine) Transition(
 			transitionName, def.WorkflowType, e.deps.ErrInvalidTransition)
 	}
 
-	// 4. Check if already terminal
+	// 3. Check if already terminal
 	if st, exists := def.States[instance.CurrentState]; exists && st.IsTerminal {
 		return nil, fmt.Errorf("flowstate: workflow %s/%s is in terminal state %q: %w",
 			aggregateType, aggregateID, instance.CurrentState, e.deps.ErrAlreadyTerminal)
 	}
 
-	// 5. Validate source state
-	if !containsSource(tr.Sources, instance.CurrentState) {
+	// 4. Validate source state
+	if !slices.Contains(tr.Sources, instance.CurrentState) {
 		return nil, fmt.Errorf("flowstate: transition %q not valid from state %q (expected one of %v): %w",
 			transitionName, instance.CurrentState, tr.Sources, e.deps.ErrInvalidTransition)
 	}
 
-	// 6. Run guards
+	// 5. Run guards
 	if err := e.runGuards(ctx, def.WorkflowType, tr, nil, params); err != nil {
 		return nil, err
 	}
 
-	// 7. Determine target state (direct or routed)
+	// 6. Determine target state (direct or routed)
 	targetState := tr.Target
 	if len(tr.Routes) > 0 {
 		resolved, err := e.resolveRoute(ctx, tr, nil, params)
@@ -188,7 +189,7 @@ func (e *Engine) Transition(
 		targetState = resolved
 	}
 
-	// 8. Build event
+	// 7. Build event
 	now := e.deps.Clock.Now()
 	event := types.DomainEvent{
 		ID:              generateID(),
@@ -206,13 +207,13 @@ func (e *Engine) Transition(
 		CreatedAt:       now,
 	}
 
-	// 9. Update instance
+	// 8. Update instance
 	previousState := instance.CurrentState
 	instance.LastReadUpdatedAt = instance.UpdatedAt // snapshot before modification for optimistic locking
 	instance.CurrentState = targetState
 	instance.UpdatedAt = now
 
-	// 10. Transaction: persist event + update instance
+	// 9. Transaction: persist event + update instance
 	tx, err := e.deps.TxProvider.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("flowstate: begin tx: %w", err)
@@ -232,7 +233,7 @@ func (e *Engine) Transition(
 		return nil, fmt.Errorf("flowstate: commit tx: %w", err)
 	}
 
-	// 11. Post-commit: collect warnings from non-fatal failures
+	// 10. Post-commit: collect warnings from non-fatal failures
 	var warnings []types.PostCommitWarning
 
 	// Emit event
@@ -243,7 +244,7 @@ func (e *Engine) Transition(
 		}
 	}
 
-	// 12. Post-commit: dispatch activities
+	// 11. Post-commit: dispatch activities
 	var activitiesDispatched []string
 	if len(tr.Activities) > 0 && e.deps.ActivityRunner != nil {
 		for _, actDef := range tr.Activities {
@@ -293,7 +294,7 @@ func (e *Engine) Transition(
 		}
 	}
 
-	// 13. Post-commit: create pending task if EmitTask defined
+	// 12. Post-commit: create pending task if EmitTask defined
 	var taskCreated *types.PendingTask
 	if tr.TaskDef != nil && e.deps.TaskStore != nil {
 		task := types.PendingTask{
@@ -321,7 +322,7 @@ func (e *Engine) Transition(
 		}
 	}
 
-	// 14. Post-commit: spawn child workflow(s)
+	// 13. Post-commit: spawn child workflow(s)
 	var childrenSpawned []types.ChildRelation
 	if tr.ChildDef != nil && e.deps.ChildStore != nil {
 		childAggID := generateID()
@@ -334,7 +335,7 @@ func (e *Engine) Transition(
 			ChildAggregateType:  tr.ChildDef.WorkflowType,
 			ChildAggregateID:    childAggID,
 			CorrelationID:       instance.CorrelationID,
-			Status:              "ACTIVE",
+			Status:              types.ChildStatusActive,
 			CreatedAt:           now,
 		}
 		if createErr := e.deps.ChildStore.Create(ctx, nil, relation); createErr != nil {
@@ -360,7 +361,7 @@ func (e *Engine) Transition(
 				ChildAggregateID:    childAggID,
 				CorrelationID:       instance.CorrelationID,
 				JoinPolicy:          tr.ChildrenDef.Join.Mode,
-				Status:              "ACTIVE",
+				Status:              types.ChildStatusActive,
 				CreatedAt:           now,
 			}
 			if createErr := e.deps.ChildStore.Create(ctx, nil, relation); createErr != nil {
@@ -372,7 +373,7 @@ func (e *Engine) Transition(
 		}
 	}
 
-	// 15. Build result
+	// 14. Build result
 	isTerminal := false
 	if st, exists := def.States[targetState]; exists && st.IsTerminal {
 		isTerminal = true
@@ -436,7 +437,7 @@ func (e *Engine) Signal(ctx context.Context, input types.SignalInput) (*types.Tr
 	var matches []string
 	for name, tr := range def.Transitions {
 		if tr.TriggerType == types.TriggerSignal && tr.TriggerKey == input.SignalName {
-			if containsSource(tr.Sources, instance.CurrentState) {
+			if slices.Contains(tr.Sources, instance.CurrentState) {
 				matches = append(matches, name)
 			}
 		}
@@ -490,7 +491,7 @@ func (e *Engine) CompleteTask(ctx context.Context, taskID, choice, actorID strin
 	var matches []string
 	for name, tr := range def.Transitions {
 		if tr.TriggerType == types.TriggerTaskCompleted && tr.TriggerKey == task.TaskType {
-			if containsSource(tr.Sources, instance.CurrentState) {
+			if slices.Contains(tr.Sources, instance.CurrentState) {
 				matches = append(matches, name)
 			}
 		}
@@ -577,7 +578,7 @@ func (e *Engine) ChildCompleted(ctx context.Context, childAggregateType, childAg
 	// Single child: find matching OnChildCompleted transition
 	for name, tr := range def.Transitions {
 		if tr.TriggerType == types.TriggerChildCompleted && tr.TriggerKey == childAggregateType {
-			if containsSource(tr.Sources, instance.CurrentState) {
+			if slices.Contains(tr.Sources, instance.CurrentState) {
 				return e.Transition(ctx, relation.ParentAggregateType, relation.ParentAggregateID, name, "system", map[string]any{
 					"_child_aggregate_type": childAggregateType,
 					"_child_aggregate_id":   childAggregateID,
@@ -606,7 +607,7 @@ func (e *Engine) evaluateJoinPolicy(
 	completedCount := 0
 	total := len(siblings)
 	for _, s := range siblings {
-		if s.Status == "COMPLETED" {
+		if s.Status == types.ChildStatusCompleted {
 			completedCount++
 		}
 	}
@@ -636,7 +637,7 @@ func (e *Engine) evaluateJoinPolicy(
 	// Find matching OnChildrenJoined transition
 	for name, tr := range def.Transitions {
 		if tr.TriggerType == types.TriggerChildrenJoined {
-			if containsSource(tr.Sources, instance.CurrentState) {
+			if slices.Contains(tr.Sources, instance.CurrentState) {
 				return e.Transition(ctx, relation.ParentAggregateType, relation.ParentAggregateID, name, "system", map[string]any{
 					"_group_id":        relation.GroupID,
 					"_completed_count": completedCount,
@@ -816,14 +817,11 @@ func (e *Engine) runGuards(ctx context.Context, workflowType string, tr types.Tr
 	return nil
 }
 
-func containsSource(sources []string, state string) bool {
-	return slices.Contains(sources, state)
-}
 
 func generateID() string {
 	b := make([]byte, 16)
 	_, _ = rand.Read(b)
-	return fmt.Sprintf("%x", b)
+	return hex.EncodeToString(b)
 }
 
 func copyMap(m map[string]any) map[string]any {

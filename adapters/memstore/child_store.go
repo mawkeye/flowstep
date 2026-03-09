@@ -9,6 +9,7 @@ import (
 	"github.com/mawkeye/flowstate/types"
 )
 
+
 // ChildStore is an in-memory implementation of flowstate.ChildStore.
 type ChildStore struct {
 	mu       sync.RWMutex
@@ -72,7 +73,7 @@ func (s *ChildStore) Complete(_ context.Context, _ any, childAggregateType, chil
 			// does not accept a timestamp parameter. For production use, prefer a store
 			// backed by a database that records the commit time server-side.
 			now := time.Now()
-			s.children[i].Status = "COMPLETED"
+			s.children[i].Status = types.ChildStatusCompleted
 			s.children[i].ChildTerminalState = terminalState
 			s.children[i].CompletedAt = &now
 			return nil

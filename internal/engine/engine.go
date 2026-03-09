@@ -9,6 +9,7 @@ import (
 	"slices"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/mawkeye/flowstate/types"
 )
@@ -128,73 +129,112 @@ func (e *Engine) Transition(
 
 	start := e.deps.Clock.Now()
 
-	// 1. Load or create workflow instance, then resolve the correct definition version
-	instance, err := e.deps.InstanceStore.Get(ctx, aggregateType, aggregateID)
-	var def *types.Definition
+	def, instance, err := e.loadInstanceAndDef(ctx, aggregateType, aggregateID)
 	if err != nil {
-		if !errors.Is(err, e.deps.ErrInstanceNotFound) {
-			return nil, fmt.Errorf("flowstate: get instance: %w", err)
-		}
-		// New instance: use latest definition
-		var ok bool
-		def, ok = e.definitionFor(aggregateType, 0)
-		if !ok {
-			return nil, fmt.Errorf("flowstate: no workflow registered for aggregate type %q", aggregateType)
-		}
-		instance, err = e.createInstance(ctx, def, aggregateType, aggregateID)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		// Existing instance: use its version
-		var ok bool
-		def, ok = e.definitionFor(aggregateType, instance.WorkflowVersion)
-		if !ok {
-			return nil, fmt.Errorf("flowstate: no workflow version %d registered for aggregate type %q",
-				instance.WorkflowVersion, aggregateType)
-		}
-	}
-
-	// 2. Look up transition
-	tr, ok := def.Transitions[transitionName]
-	if !ok {
-		return nil, fmt.Errorf("flowstate: transition %q not found in workflow %q: %w",
-			transitionName, def.WorkflowType, e.deps.ErrInvalidTransition)
-	}
-
-	// 3. Check if already terminal
-	if st, exists := def.States[instance.CurrentState]; exists && st.IsTerminal {
-		return nil, fmt.Errorf("flowstate: workflow %s/%s is in terminal state %q: %w",
-			aggregateType, aggregateID, instance.CurrentState, e.deps.ErrAlreadyTerminal)
-	}
-
-	// 4. Validate source state
-	if !slices.Contains(tr.Sources, instance.CurrentState) {
-		return nil, fmt.Errorf("flowstate: transition %q not valid from state %q (expected one of %v): %w",
-			transitionName, instance.CurrentState, tr.Sources, e.deps.ErrInvalidTransition)
-	}
-
-	// 5. Run guards
-	if err := e.runGuards(ctx, def.WorkflowType, tr, nil, params); err != nil {
 		return nil, err
 	}
 
-	// 6. Determine target state (direct or routed)
+	tr, targetState, err := e.validateTransition(ctx, def, instance, transitionName, params)
+	if err != nil {
+		return nil, err
+	}
+
+	previousState := instance.CurrentState
+
+	event, err := e.commitTransition(ctx, def, instance, tr, targetState, transitionName, actorID, params)
+	if err != nil {
+		return nil, err
+	}
+
+	return e.runPostCommit(ctx, def, instance, tr, event, previousState, params, start)
+}
+
+// loadInstanceAndDef retrieves or creates the workflow instance and resolves the matching definition.
+func (e *Engine) loadInstanceAndDef(ctx context.Context, aggregateType, aggregateID string) (*types.Definition, *types.WorkflowInstance, error) {
+	instance, err := e.deps.InstanceStore.Get(ctx, aggregateType, aggregateID)
+	if err != nil {
+		if !errors.Is(err, e.deps.ErrInstanceNotFound) {
+			return nil, nil, fmt.Errorf("flowstate: get instance: %w", err)
+		}
+		def, ok := e.definitionFor(aggregateType, 0)
+		if !ok {
+			return nil, nil, fmt.Errorf("flowstate: no workflow registered for aggregate type %q", aggregateType)
+		}
+		instance, err = e.createInstance(ctx, def, aggregateType, aggregateID)
+		if err != nil {
+			return nil, nil, err
+		}
+		return def, instance, nil
+	}
+	def, ok := e.definitionFor(aggregateType, instance.WorkflowVersion)
+	if !ok {
+		return nil, nil, fmt.Errorf("flowstate: no workflow version %d registered for aggregate type %q",
+			instance.WorkflowVersion, aggregateType)
+	}
+	return def, instance, nil
+}
+
+// validateTransition validates the transition is allowed from the instance's current state,
+// runs guards, and resolves the target state. Returns the transition definition and target state.
+func (e *Engine) validateTransition(
+	ctx context.Context,
+	def *types.Definition,
+	instance *types.WorkflowInstance,
+	transitionName string,
+	params map[string]any,
+) (types.TransitionDef, string, error) {
+	// 1. Look up transition
+	tr, ok := def.Transitions[transitionName]
+	if !ok {
+		return types.TransitionDef{}, "", fmt.Errorf("flowstate: transition %q not found in workflow %q: %w",
+			transitionName, def.WorkflowType, e.deps.ErrInvalidTransition)
+	}
+
+	// 2. Check if already terminal
+	if st, exists := def.States[instance.CurrentState]; exists && st.IsTerminal {
+		return types.TransitionDef{}, "", fmt.Errorf("flowstate: workflow %s/%s is in terminal state %q: %w",
+			instance.AggregateType, instance.AggregateID, instance.CurrentState, e.deps.ErrAlreadyTerminal)
+	}
+
+	// 3. Validate source state
+	if !slices.Contains(tr.Sources, instance.CurrentState) {
+		return types.TransitionDef{}, "", fmt.Errorf("flowstate: transition %q not valid from state %q (expected one of %v): %w",
+			transitionName, instance.CurrentState, tr.Sources, e.deps.ErrInvalidTransition)
+	}
+
+	// 4. Run guards
+	if err := e.runGuards(ctx, def.WorkflowType, tr, instance, params); err != nil {
+		return types.TransitionDef{}, "", err
+	}
+
+	// 5. Determine target state (direct or routed)
 	targetState := tr.Target
 	if len(tr.Routes) > 0 {
-		resolved, err := e.resolveRoute(ctx, tr, nil, params)
+		resolved, err := e.resolveRoute(ctx, tr, instance, params)
 		if err != nil {
-			return nil, err
+			return types.TransitionDef{}, "", err
 		}
 		targetState = resolved
 	}
 
-	// 7. Build event
+	return tr, targetState, nil
+}
+
+// commitTransition builds the domain event, mutates the instance, and persists both in a transaction.
+func (e *Engine) commitTransition(
+	ctx context.Context,
+	def *types.Definition,
+	instance *types.WorkflowInstance,
+	tr types.TransitionDef,
+	targetState, transitionName, actorID string,
+	params map[string]any,
+) (types.DomainEvent, error) {
+	// 1. Build event
 	now := e.deps.Clock.Now()
 	event := types.DomainEvent{
 		ID:              generateID(),
-		AggregateType:   aggregateType,
-		AggregateID:     aggregateID,
+		AggregateType:   instance.AggregateType,
+		AggregateID:     instance.AggregateID,
 		WorkflowType:    def.WorkflowType,
 		WorkflowVersion: def.Version,
 		EventType:       tr.Event,
@@ -207,36 +247,49 @@ func (e *Engine) Transition(
 		CreatedAt:       now,
 	}
 
-	// 8. Update instance
-	previousState := instance.CurrentState
-	instance.LastReadUpdatedAt = instance.UpdatedAt // snapshot before modification for optimistic locking
+	// 2. Mutate instance — snapshot UpdatedAt for optimistic locking before overwriting
+	instance.LastReadUpdatedAt = instance.UpdatedAt
 	instance.CurrentState = targetState
 	instance.UpdatedAt = now
 
-	// 9. Transaction: persist event + update instance
+	// 3. Persist event + updated instance in a transaction
 	tx, err := e.deps.TxProvider.Begin(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("flowstate: begin tx: %w", err)
+		return types.DomainEvent{}, fmt.Errorf("flowstate: begin tx: %w", err)
 	}
-
 	if err := e.deps.EventStore.Append(ctx, tx, event); err != nil {
 		_ = e.deps.TxProvider.Rollback(ctx, tx)
-		return nil, fmt.Errorf("flowstate: append event: %w", err)
+		return types.DomainEvent{}, fmt.Errorf("flowstate: append event: %w", err)
 	}
-
 	if err := e.deps.InstanceStore.Update(ctx, tx, *instance); err != nil {
 		_ = e.deps.TxProvider.Rollback(ctx, tx)
-		return nil, fmt.Errorf("flowstate: update instance: %w", err)
+		return types.DomainEvent{}, fmt.Errorf("flowstate: update instance: %w", err)
 	}
-
 	if err := e.deps.TxProvider.Commit(ctx, tx); err != nil {
-		return nil, fmt.Errorf("flowstate: commit tx: %w", err)
+		return types.DomainEvent{}, fmt.Errorf("flowstate: commit tx: %w", err)
 	}
 
-	// 10. Post-commit: collect warnings from non-fatal failures
+	return event, nil
+}
+
+// runPostCommit executes all post-commit side effects (event bus, activities, tasks, children)
+// and builds the TransitionResult. Failures are collected as warnings — the transition has
+// already been committed and is considered successful.
+func (e *Engine) runPostCommit(
+	ctx context.Context,
+	def *types.Definition,
+	instance *types.WorkflowInstance,
+	tr types.TransitionDef,
+	event types.DomainEvent,
+	previousState string,
+	params map[string]any,
+	start time.Time,
+) (*types.TransitionResult, error) {
+	now := event.CreatedAt
+	targetState := instance.CurrentState
 	var warnings []types.PostCommitWarning
 
-	// Emit event
+	// 1. Emit event to bus
 	if e.deps.EventBus != nil {
 		if emitErr := e.deps.EventBus.Emit(ctx, event); emitErr != nil {
 			warnings = append(warnings, types.PostCommitWarning{Operation: "EventBus.Emit", Err: emitErr})
@@ -244,7 +297,7 @@ func (e *Engine) Transition(
 		}
 	}
 
-	// 11. Post-commit: dispatch activities
+	// 2. Dispatch activities
 	var activitiesDispatched []string
 	if len(tr.Activities) > 0 && e.deps.ActivityRunner != nil {
 		for _, actDef := range tr.Activities {
@@ -252,14 +305,14 @@ func (e *Engine) Transition(
 				ID:            generateID(),
 				ActivityName:  actDef.Name,
 				WorkflowType:  def.WorkflowType,
-				AggregateType: aggregateType,
-				AggregateID:   aggregateID,
+				AggregateType: instance.AggregateType,
+				AggregateID:   instance.AggregateID,
 				CorrelationID: instance.CorrelationID,
 				Mode:          actDef.Mode,
 				Input: types.ActivityInput{
 					WorkflowType:  def.WorkflowType,
-					AggregateType: aggregateType,
-					AggregateID:   aggregateID,
+					AggregateType: instance.AggregateType,
+					AggregateID:   instance.AggregateID,
 					CorrelationID: instance.CorrelationID,
 					Params:        params,
 					ScheduledAt:   now,
@@ -270,20 +323,15 @@ func (e *Engine) Transition(
 				MaxAttempts: 1,
 				ScheduledAt: now,
 			}
-
 			if actDef.RetryPolicy != nil {
 				invocation.MaxAttempts = actDef.RetryPolicy.MaxAttempts
 			}
-
-			// Store invocation
 			if e.deps.ActivityStore != nil {
 				if createErr := e.deps.ActivityStore.Create(ctx, nil, invocation); createErr != nil {
 					warnings = append(warnings, types.PostCommitWarning{Operation: "ActivityStore.Create", Err: createErr})
 					e.deps.Hooks.OnPostCommitError(ctx, "ActivityStore.Create", createErr)
 				}
 			}
-
-			// Dispatch to runner
 			if dispatchErr := e.deps.ActivityRunner.Dispatch(ctx, invocation); dispatchErr != nil {
 				warnings = append(warnings, types.PostCommitWarning{Operation: "ActivityRunner.Dispatch", Err: dispatchErr})
 				e.deps.Hooks.OnPostCommitError(ctx, "ActivityRunner.Dispatch", dispatchErr)
@@ -294,14 +342,14 @@ func (e *Engine) Transition(
 		}
 	}
 
-	// 12. Post-commit: create pending task if EmitTask defined
+	// 3. Create pending task
 	var taskCreated *types.PendingTask
 	if tr.TaskDef != nil && e.deps.TaskStore != nil {
 		task := types.PendingTask{
 			ID:            generateID(),
 			WorkflowType:  def.WorkflowType,
-			AggregateType: aggregateType,
-			AggregateID:   aggregateID,
+			AggregateType: instance.AggregateType,
+			AggregateID:   instance.AggregateID,
 			CorrelationID: instance.CorrelationID,
 			TaskType:      tr.TaskDef.Type,
 			Description:   tr.TaskDef.Description,
@@ -311,8 +359,7 @@ func (e *Engine) Transition(
 			CreatedAt:     now,
 		}
 		if tr.TaskDef.Timeout > 0 {
-			expiresAt := now.Add(tr.TaskDef.Timeout)
-			task.ExpiresAt = expiresAt
+			task.ExpiresAt = now.Add(tr.TaskDef.Timeout)
 		}
 		if createErr := e.deps.TaskStore.Create(ctx, nil, task); createErr != nil {
 			warnings = append(warnings, types.PostCommitWarning{Operation: "TaskStore.Create", Err: createErr})
@@ -322,15 +369,15 @@ func (e *Engine) Transition(
 		}
 	}
 
-	// 13. Post-commit: spawn child workflow(s)
+	// 4. Spawn child workflow(s)
 	var childrenSpawned []types.ChildRelation
 	if tr.ChildDef != nil && e.deps.ChildStore != nil {
 		childAggID := generateID()
 		relation := types.ChildRelation{
 			ID:                  generateID(),
 			ParentWorkflowType:  def.WorkflowType,
-			ParentAggregateType: aggregateType,
-			ParentAggregateID:   aggregateID,
+			ParentAggregateType: instance.AggregateType,
+			ParentAggregateID:   instance.AggregateID,
 			ChildWorkflowType:   tr.ChildDef.WorkflowType,
 			ChildAggregateType:  tr.ChildDef.WorkflowType,
 			ChildAggregateID:    childAggID,
@@ -354,8 +401,8 @@ func (e *Engine) Transition(
 				ID:                  generateID(),
 				GroupID:             groupID,
 				ParentWorkflowType:  def.WorkflowType,
-				ParentAggregateType: aggregateType,
-				ParentAggregateID:   aggregateID,
+				ParentAggregateType: instance.AggregateType,
+				ParentAggregateID:   instance.AggregateID,
 				ChildWorkflowType:   tr.ChildrenDef.WorkflowType,
 				ChildAggregateType:  tr.ChildrenDef.WorkflowType,
 				ChildAggregateID:    childAggID,
@@ -373,18 +420,17 @@ func (e *Engine) Transition(
 		}
 	}
 
-	// 14. Build result
+	// 5. Build result
 	isTerminal := false
 	if st, exists := def.States[targetState]; exists && st.IsTerminal {
 		isTerminal = true
 	}
-
 	result := &types.TransitionResult{
 		Instance:             *instance,
 		Event:                event,
 		PreviousState:        previousState,
 		NewState:             targetState,
-		TransitionName:       transitionName,
+		TransitionName:       event.TransitionName,
 		ActivitiesDispatched: activitiesDispatched,
 		TaskCreated:          taskCreated,
 		ChildrenSpawned:      childrenSpawned,
@@ -392,7 +438,7 @@ func (e *Engine) Transition(
 		Warnings:             warnings,
 	}
 
-	// 15. Post-commit: hooks
+	// 6. Hook
 	duration := e.deps.Clock.Now().Sub(start)
 	e.deps.Hooks.OnTransition(ctx, *result, duration)
 

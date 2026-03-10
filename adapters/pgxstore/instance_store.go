@@ -8,11 +8,11 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/mawkeye/flowstate"
-	"github.com/mawkeye/flowstate/types"
+	"github.com/mawkeye/flowstep"
+	"github.com/mawkeye/flowstep/types"
 )
 
-// InstanceStore implements flowstate.InstanceStore using PostgreSQL.
+// InstanceStore implements flowstep.InstanceStore using PostgreSQL.
 type InstanceStore struct {
 	pool        *pgxpool.Pool
 	errNotFound error
@@ -32,7 +32,7 @@ func (s *InstanceStore) Get(ctx context.Context, aggregateType, aggregateID stri
 		SELECT id, workflow_type, workflow_version, aggregate_type, aggregate_id,
 		       current_state, state_data, correlation_id, is_stuck, stuck_reason,
 		       retry_count, created_at, updated_at
-		FROM flowstate_instances
+		FROM flowstep_instances
 		WHERE aggregate_type = $1 AND aggregate_id = $2`,
 		aggregateType, aggregateID,
 	).Scan(
@@ -54,7 +54,7 @@ func (s *InstanceStore) Get(ctx context.Context, aggregateType, aggregateID stri
 
 func (s *InstanceStore) Create(ctx context.Context, tx any, instance types.WorkflowInstance) error {
 	const q = `
-		INSERT INTO flowstate_instances
+		INSERT INTO flowstep_instances
 			(id, workflow_type, workflow_version, aggregate_type, aggregate_id,
 			 current_state, state_data, correlation_id, is_stuck, stuck_reason,
 			 retry_count, created_at, updated_at)
@@ -85,7 +85,7 @@ func (s *InstanceStore) Create(ctx context.Context, tx any, instance types.Workf
 
 func (s *InstanceStore) Update(ctx context.Context, tx any, instance types.WorkflowInstance) error {
 	const q = `
-		UPDATE flowstate_instances
+		UPDATE flowstep_instances
 		SET current_state = $1, state_data = $2, is_stuck = $3, stuck_reason = $4,
 		    retry_count = $5, updated_at = $6
 		WHERE aggregate_type = $7 AND aggregate_id = $8 AND updated_at = $9`
@@ -116,7 +116,7 @@ func (s *InstanceStore) Update(ctx context.Context, tx any, instance types.Workf
 	}
 
 	if rowsAffected == 0 {
-		return fmt.Errorf("pgxstore: update instance: %w", flowstate.ErrConcurrentModification)
+		return fmt.Errorf("pgxstore: update instance: %w", flowstep.ErrConcurrentModification)
 	}
 	return nil
 }
@@ -126,7 +126,7 @@ func (s *InstanceStore) ListStuck(ctx context.Context) ([]types.WorkflowInstance
 		SELECT id, workflow_type, workflow_version, aggregate_type, aggregate_id,
 		       current_state, state_data, correlation_id, is_stuck, stuck_reason,
 		       retry_count, created_at, updated_at
-		FROM flowstate_instances
+		FROM flowstep_instances
 		WHERE is_stuck = TRUE
 		ORDER BY updated_at`)
 	if err != nil {

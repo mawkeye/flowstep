@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/mawkeye/flowstate/adapters/pgxstore"
+	"github.com/mawkeye/flowstep/adapters/pgxstore"
 )
 
 func TestTxProvider(t *testing.T) {
@@ -23,7 +23,7 @@ func TestTxProvider(t *testing.T) {
 	defer pool.Close()
 
 	// Ensure table exists (using instances table for test)
-	if _, err := pool.Exec(ctx, "TRUNCATE flowstate_instances"); err != nil {
+	if _, err := pool.Exec(ctx, "TRUNCATE flowstep_instances"); err != nil {
 		t.Fatalf("failed to truncate: %v", err)
 	}
 

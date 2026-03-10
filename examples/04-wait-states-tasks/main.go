@@ -19,9 +19,9 @@ import (
 	"os"
 	"time"
 
-	"github.com/mawkeye/flowstate"
-	"github.com/mawkeye/flowstate/adapters/memstore"
-	"github.com/mawkeye/flowstate/types"
+	"github.com/mawkeye/flowstep"
+	"github.com/mawkeye/flowstep/adapters/memstore"
+	"github.com/mawkeye/flowstep/types"
 )
 
 func main() {
@@ -32,20 +32,20 @@ func main() {
 	// Entering PENDING_APPROVAL emits a task with two options: "approve" or "reject".
 	// Completing the task with choice "approve" triggers the "approve" transition.
 	// Completing the task with choice "reject" triggers the "reject" transition.
-	def, err := flowstate.Define("expense", "expense_workflow").
+	def, err := flowstep.Define("expense", "expense_workflow").
 		Version(1).
 		States(
-			flowstate.Initial("SUBMITTED"),
-			flowstate.WaitState("PENDING_APPROVAL"), // pauses for human input
-			flowstate.Terminal("APPROVED"),
-			flowstate.Terminal("REJECTED"),
+			flowstep.Initial("SUBMITTED"),
+			flowstep.WaitState("PENDING_APPROVAL"), // pauses for human input
+			flowstep.Terminal("APPROVED"),
+			flowstep.Terminal("REJECTED"),
 		).
 		Transition("submit_for_approval",
-			flowstate.From("SUBMITTED"),
-			flowstate.To("PENDING_APPROVAL"),
-			flowstate.Event("ApprovalRequested"),
+			flowstep.From("SUBMITTED"),
+			flowstep.To("PENDING_APPROVAL"),
+			flowstep.Event("ApprovalRequested"),
 			// Emit a task when entering PENDING_APPROVAL
-			flowstate.EmitTask(types.TaskDef{
+			flowstep.EmitTask(types.TaskDef{
 				Type:        "expense_approval",
 				Description: "Review and approve or reject the expense claim",
 				Options:     []string{"approve", "reject"},
@@ -54,16 +54,16 @@ func main() {
 		).
 		// One OnTaskCompleted transition per option
 		Transition("approve",
-			flowstate.From("PENDING_APPROVAL"),
-			flowstate.To("APPROVED"),
-			flowstate.OnTaskCompleted("expense_approval"),
-			flowstate.Event("ExpenseApproved"),
+			flowstep.From("PENDING_APPROVAL"),
+			flowstep.To("APPROVED"),
+			flowstep.OnTaskCompleted("expense_approval"),
+			flowstep.Event("ExpenseApproved"),
 		).
 		Transition("reject",
-			flowstate.From("PENDING_APPROVAL"),
-			flowstate.To("REJECTED"),
-			flowstate.OnTaskCompleted("expense_approval"),
-			flowstate.Event("ExpenseRejected"),
+			flowstep.From("PENDING_APPROVAL"),
+			flowstep.To("REJECTED"),
+			flowstep.OnTaskCompleted("expense_approval"),
+			flowstep.Event("ExpenseRejected"),
 		).
 		Build()
 	if err != nil {
@@ -80,11 +80,11 @@ func main() {
 	// TaskStore is required for wait states
 	taskStore := memstore.NewTaskStore()
 
-	engine, err := flowstate.NewEngine(
-		flowstate.WithEventStore(memstore.NewEventStore()),
-		flowstate.WithInstanceStore(memstore.NewInstanceStore()),
-		flowstate.WithTaskStore(taskStore),
-		flowstate.WithTxProvider(memstore.NewTxProvider()),
+	engine, err := flowstep.NewEngine(
+		flowstep.WithEventStore(memstore.NewEventStore()),
+		flowstep.WithInstanceStore(memstore.NewInstanceStore()),
+		flowstep.WithTaskStore(taskStore),
+		flowstep.WithTxProvider(memstore.NewTxProvider()),
 	)
 	if err != nil {
 		log.Fatalf("create engine: %v", err)

@@ -1,4 +1,4 @@
-// Package natsbus provides a NATS JetStream implementation of the flowstate EventBus.
+// Package natsbus provides a NATS JetStream implementation of the flowstep EventBus.
 // Uses Publish on Emit and durable consumers for subscriptions.
 package natsbus
 
@@ -8,17 +8,17 @@ import (
 	"fmt"
 
 	"github.com/nats-io/nats.go"
-	"github.com/mawkeye/flowstate/types"
+	"github.com/mawkeye/flowstep/types"
 )
 
-// Bus implements flowstate.EventBus using NATS JetStream.
+// Bus implements flowstep.EventBus using NATS JetStream.
 type Bus struct {
 	js      nats.JetStreamContext
 	subject string
 }
 
 // New creates a new NATS JetStream EventBus.
-// The subject is the NATS subject to publish/subscribe on (e.g., "flowstate.events").
+// The subject is the NATS subject to publish/subscribe on (e.g., "flowstep.events").
 func New(js nats.JetStreamContext, subject string) *Bus {
 	return &Bus{
 		js:      js,

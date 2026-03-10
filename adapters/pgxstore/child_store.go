@@ -5,10 +5,10 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/mawkeye/flowstate/types"
+	"github.com/mawkeye/flowstep/types"
 )
 
-// ChildStore implements flowstate.ChildStore using PostgreSQL.
+// ChildStore implements flowstep.ChildStore using PostgreSQL.
 type ChildStore struct {
 	pool *pgxpool.Pool
 }
@@ -19,7 +19,7 @@ func NewChildStore(pool *pgxpool.Pool) *ChildStore {
 }
 
 func (s *ChildStore) Create(ctx context.Context, tx any, relation types.ChildRelation) error {
-	query := `INSERT INTO flowstate_children
+	query := `INSERT INTO flowstep_children
 		(id, group_id, parent_workflow_type, parent_aggregate_type, parent_aggregate_id,
 		 child_workflow_type, child_aggregate_type, child_aggregate_id,
 		 correlation_id, status, join_policy, created_at)
@@ -59,7 +59,7 @@ func (s *ChildStore) GetByChild(ctx context.Context, childAggregateType, childAg
 		SELECT id, group_id, parent_workflow_type, parent_aggregate_type, parent_aggregate_id,
 		       child_workflow_type, child_aggregate_type, child_aggregate_id,
 		       correlation_id, status, child_terminal_state, join_policy, created_at, completed_at
-		FROM flowstate_children
+		FROM flowstep_children
 		WHERE child_aggregate_type = $1 AND child_aggregate_id = $2`,
 		childAggregateType, childAggregateID,
 	).Scan(
@@ -85,7 +85,7 @@ func (s *ChildStore) GetByParent(ctx context.Context, parentAggregateType, paren
 		SELECT id, group_id, parent_workflow_type, parent_aggregate_type, parent_aggregate_id,
 		       child_workflow_type, child_aggregate_type, child_aggregate_id,
 		       correlation_id, status, child_terminal_state, join_policy, created_at, completed_at
-		FROM flowstate_children
+		FROM flowstep_children
 		WHERE parent_aggregate_type = $1 AND parent_aggregate_id = $2`,
 		parentAggregateType, parentAggregateID)
 	if err != nil {
@@ -101,7 +101,7 @@ func (s *ChildStore) GetByGroup(ctx context.Context, groupID string) ([]types.Ch
 		SELECT id, group_id, parent_workflow_type, parent_aggregate_type, parent_aggregate_id,
 		       child_workflow_type, child_aggregate_type, child_aggregate_id,
 		       correlation_id, status, child_terminal_state, join_policy, created_at, completed_at
-		FROM flowstate_children
+		FROM flowstep_children
 		WHERE group_id = $1`, groupID)
 	if err != nil {
 		return nil, fmt.Errorf("pgxstore: query children by group: %w", err)
@@ -112,7 +112,7 @@ func (s *ChildStore) GetByGroup(ctx context.Context, groupID string) ([]types.Ch
 }
 
 func (s *ChildStore) Complete(ctx context.Context, tx any, childAggregateType, childAggregateID, terminalState string) error {
-	query := `UPDATE flowstate_children SET status = 'COMPLETED', child_terminal_state = $1, completed_at = NOW()
+	query := `UPDATE flowstep_children SET status = 'COMPLETED', child_terminal_state = $1, completed_at = NOW()
 		WHERE child_aggregate_type = $2 AND child_aggregate_id = $3`
 
 	if tx != nil {

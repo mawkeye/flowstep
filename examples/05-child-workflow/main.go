@@ -35,9 +35,9 @@ import (
 	"log"
 	"os"
 
-	"github.com/mawkeye/flowstate"
-	"github.com/mawkeye/flowstate/adapters/memstore"
-	"github.com/mawkeye/flowstate/types"
+	"github.com/mawkeye/flowstep"
+	"github.com/mawkeye/flowstep/adapters/memstore"
+	"github.com/mawkeye/flowstep/types"
 )
 
 const (
@@ -51,28 +51,28 @@ const (
 
 func buildOrderWorkflow() (*types.Definition, error) {
 	// Aggregate type: "order" — distinct from the child's "shipment"
-	return flowstate.Define("order", "order_workflow").
+	return flowstep.Define("order", "order_workflow").
 		Version(1).
 		States(
-			flowstate.Initial("CREATED"),
-			flowstate.State("PROCESSING"),
-			flowstate.State("WAITING_FOR_SHIPMENT"),
-			flowstate.Terminal("COMPLETED"),
-			flowstate.Terminal("CANCELLED"),
+			flowstep.Initial("CREATED"),
+			flowstep.State("PROCESSING"),
+			flowstep.State("WAITING_FOR_SHIPMENT"),
+			flowstep.Terminal("COMPLETED"),
+			flowstep.Terminal("CANCELLED"),
 		).
 		Transition("start_processing",
-			flowstate.From("CREATED"),
-			flowstate.To("PROCESSING"),
-			flowstate.Event("OrderStarted"),
+			flowstep.From("CREATED"),
+			flowstep.To("PROCESSING"),
+			flowstep.Event("OrderStarted"),
 		).
 		Transition("ship",
-			flowstate.From("PROCESSING"),
-			flowstate.To("WAITING_FOR_SHIPMENT"),
-			flowstate.Event("ShipmentStarted"),
+			flowstep.From("PROCESSING"),
+			flowstep.To("WAITING_FOR_SHIPMENT"),
+			flowstep.Event("ShipmentStarted"),
 			// SpawnChild creates a ChildRelation with:
 			//   ChildAggregateType = ChildDef.WorkflowType = "shipment_workflow"
 			//   ChildAggregateID   = engine-generated UUID
-			flowstate.SpawnChild(types.ChildDef{
+			flowstep.SpawnChild(types.ChildDef{
 				WorkflowType: childWorkflowType,
 			}),
 		).
@@ -80,43 +80,43 @@ func buildOrderWorkflow() (*types.Definition, error) {
 		// OnChildCompleted key must match ChildDef.WorkflowType and the
 		// childAggregateType argument passed to engine.ChildCompleted.
 		Transition("shipment_delivered",
-			flowstate.From("WAITING_FOR_SHIPMENT"),
-			flowstate.To("COMPLETED"),
-			flowstate.OnChildCompleted(childWorkflowType),
-			flowstate.Event("OrderCompleted"),
+			flowstep.From("WAITING_FOR_SHIPMENT"),
+			flowstep.To("COMPLETED"),
+			flowstep.OnChildCompleted(childWorkflowType),
+			flowstep.Event("OrderCompleted"),
 		).
 		Transition("cancel",
-			flowstate.From("CREATED", "PROCESSING"),
-			flowstate.To("CANCELLED"),
-			flowstate.Event("OrderCancelled"),
+			flowstep.From("CREATED", "PROCESSING"),
+			flowstep.To("CANCELLED"),
+			flowstep.Event("OrderCancelled"),
 		).
 		Build()
 }
 
 func buildShipmentWorkflow() (*types.Definition, error) {
 	// Aggregate type: "shipment" — must differ from parent's "order"
-	return flowstate.Define("shipment", childWorkflowType).
+	return flowstep.Define("shipment", childWorkflowType).
 		Version(1).
 		States(
-			flowstate.Initial("CREATED"),
-			flowstate.State("IN_TRANSIT"),
-			flowstate.Terminal("DELIVERED"),
-			flowstate.Terminal("FAILED"),
+			flowstep.Initial("CREATED"),
+			flowstep.State("IN_TRANSIT"),
+			flowstep.Terminal("DELIVERED"),
+			flowstep.Terminal("FAILED"),
 		).
 		Transition("pick_up",
-			flowstate.From("CREATED"),
-			flowstate.To("IN_TRANSIT"),
-			flowstate.Event("ShipmentPickedUp"),
+			flowstep.From("CREATED"),
+			flowstep.To("IN_TRANSIT"),
+			flowstep.Event("ShipmentPickedUp"),
 		).
 		Transition("deliver",
-			flowstate.From("IN_TRANSIT"),
-			flowstate.To("DELIVERED"),
-			flowstate.Event("ShipmentDelivered"),
+			flowstep.From("IN_TRANSIT"),
+			flowstep.To("DELIVERED"),
+			flowstep.Event("ShipmentDelivered"),
 		).
 		Transition("fail",
-			flowstate.From("CREATED", "IN_TRANSIT"),
-			flowstate.To("FAILED"),
-			flowstate.Event("ShipmentFailed"),
+			flowstep.From("CREATED", "IN_TRANSIT"),
+			flowstep.To("FAILED"),
+			flowstep.Event("ShipmentFailed"),
 		).
 		Build()
 }
@@ -140,11 +140,11 @@ func main() {
 	fmt.Println("Wrote Mermaid diagrams to examples/05-child-workflow/workflow.md")
 
 	// ChildStore is required for child workflows
-	engine, err := flowstate.NewEngine(
-		flowstate.WithEventStore(memstore.NewEventStore()),
-		flowstate.WithInstanceStore(memstore.NewInstanceStore()),
-		flowstate.WithChildStore(memstore.NewChildStore()),
-		flowstate.WithTxProvider(memstore.NewTxProvider()),
+	engine, err := flowstep.NewEngine(
+		flowstep.WithEventStore(memstore.NewEventStore()),
+		flowstep.WithInstanceStore(memstore.NewInstanceStore()),
+		flowstep.WithChildStore(memstore.NewChildStore()),
+		flowstep.WithTxProvider(memstore.NewTxProvider()),
 	)
 	if err != nil {
 		log.Fatalf("create engine: %v", err)

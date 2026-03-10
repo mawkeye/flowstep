@@ -1,6 +1,6 @@
-# flowstate Implementation and Development Guidelines
+# flowstep Implementation and Development Guidelines
 
-> **Context:** This file guides the implementation of the `flowstate` Go library. It enforces Clean Architecture, strictly separate types, and idiomatic Go patterns. This document contains critical information about working with this codebase.
+> **Context:** This file guides the implementation of the `flowstep` Go library. It enforces Clean Architecture, strictly separate types, and idiomatic Go patterns. This document contains critical information about working with this codebase.
 
 ## 0. Core Development Rules
 
@@ -20,7 +20,7 @@ These files form an immutable decision log. Never edit a previous step file -- c
 We are strictly following a **Library Layout** with **Clean Architecture** principles.
 
 ### Package Structure
-* **`flowstate` (Root)**
+* **`flowstep` (Root)**
     * **Purpose:** The Public API Contract.
     * **Contents:**
         * Interfaces (`Store`, `EventBus`, `Clock`, `Hooks`).
@@ -29,12 +29,12 @@ We are strictly following a **Library Layout** with **Clean Architecture** princ
         * Sentinel Errors (`ErrWorkflowNotFound`, `ErrGuardFailed`).
     * **Rule:** No heavy implementation logic here. Delegates to `internal`.
 
-* **`flowstate/types`** (New Requirement)
+* **`flowstep/types`** (New Requirement)
     * **Purpose:** Pure Domain Data Structures.
     * **Contents:** `DomainEvent`, `WorkflowInstance`, `PendingTask`, `ActivityInvocation`, `State`, `Transition`.
     * **Rule:** **Zero dependencies** on other packages. Pure structs only. Used by both Root and Internal to prevent circular imports.
 
-* **`flowstate/internal`**
+* **`flowstep/internal`**
     * **Purpose:** The Business Logic (Hidden).
     * **Contents:**
         * `internal/engine`: The state machine execution logic.
@@ -42,7 +42,7 @@ We are strictly following a **Library Layout** with **Clean Architecture** princ
         * `internal/graph`: Validation and reachability analysis.
     * **Rule:** Users cannot import this.
 
-* **`flowstate/adapters`** (Refined from 'Reference Implementations')
+* **`flowstep/adapters`** (Refined from 'Reference Implementations')
     * **Purpose:** Concrete implementations of interfaces.
     * **Contents:** `memstore`, `pgxstore`, `redisbus`, etc.
 
@@ -66,16 +66,16 @@ We are strictly following a **Library Layout** with **Clean Architecture** princ
 
 ### C. Error Handling
 * **Requirement:** Define sentinel errors in `errors.go` (Root).
-* **Usage:** Internal packages must return these errors (wrapped if necessary) so users can check `errors.Is(err, flowstate.ErrGuardFailed)`.
+* **Usage:** Internal packages must return these errors (wrapped if necessary) so users can check `errors.Is(err, flowstep.ErrGuardFailed)`.
 
 ### D. Interface Definition
-* **Location:** Interfaces live in `flowstate` (Root) next to the consumer (the API).
+* **Location:** Interfaces live in `flowstep` (Root) next to the consumer (the API).
 * **Naming:** Single-method interfaces named with `-er` suffix where possible (Go convention), but descriptive names (`EventStore`) are accepted for complex types.
 
 ## 3. Testing Strategy
 
 ### A. Black Box (Integration)
-* **Location:** `flowstate_test` package (external to root).
+* **Location:** `flowstep_test` package (external to root).
 * **Focus:** Tests `NewEngine`, `Define`, and `Transition` end-to-end.
 * **Goal:** Verify the contract.
 

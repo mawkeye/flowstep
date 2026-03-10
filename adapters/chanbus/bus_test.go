@@ -5,7 +5,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/mawkeye/flowstate/types"
+	"github.com/mawkeye/flowstep/types"
 )
 
 func TestBusEmitToSubscribers(t *testing.T) {

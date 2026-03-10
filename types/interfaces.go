@@ -71,7 +71,7 @@ type ActivityRunner interface {
 
 // Activity performs non-deterministic work outside the workflow transaction.
 // Can contain any code: API calls, DB writes, file I/O, network requests.
-// flowstate does NOT recover or replay activity state on failure.
+// flowstep does NOT recover or replay activity state on failure.
 type Activity interface {
 	Name() string
 	Execute(ctx context.Context, input ActivityInput) (*ActivityResult, error)

@@ -1,4 +1,4 @@
-package flowstate
+package flowstep
 
 import (
 	"errors"

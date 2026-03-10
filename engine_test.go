@@ -1,4 +1,4 @@
-package flowstate_test
+package flowstep_test
 
 import (
 	"context"
@@ -8,14 +8,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mawkeye/flowstate"
-	"github.com/mawkeye/flowstate/adapters/chanbus"
-	"github.com/mawkeye/flowstate/adapters/memstore"
-	"github.com/mawkeye/flowstate/types"
+	"github.com/mawkeye/flowstep"
+	"github.com/mawkeye/flowstep/adapters/chanbus"
+	"github.com/mawkeye/flowstep/adapters/memstore"
+	"github.com/mawkeye/flowstep/types"
 )
 
 type testHarness struct {
-	engine        *flowstate.Engine
+	engine        *flowstep.Engine
 	eventStore    *memstore.EventStore
 	instanceStore *memstore.InstanceStore
 }
@@ -24,13 +24,13 @@ func newTestHarness(t *testing.T) *testHarness {
 	t.Helper()
 	es := memstore.NewEventStore()
 	is := memstore.NewInstanceStore()
-	engine, err := flowstate.NewEngine(
-		flowstate.WithEventStore(es),
-		flowstate.WithInstanceStore(is),
-		flowstate.WithTxProvider(memstore.NewTxProvider()),
-		flowstate.WithEventBus(chanbus.New()),
-		flowstate.WithClock(flowstate.RealClock{}),
-		flowstate.WithHooks(flowstate.NoopHooks{}),
+	engine, err := flowstep.NewEngine(
+		flowstep.WithEventStore(es),
+		flowstep.WithInstanceStore(is),
+		flowstep.WithTxProvider(memstore.NewTxProvider()),
+		flowstep.WithEventBus(chanbus.New()),
+		flowstep.WithClock(flowstep.RealClock{}),
+		flowstep.WithHooks(flowstep.NoopHooks{}),
 	)
 	if err != nil {
 		t.Fatalf("failed to create engine: %v", err)
@@ -39,16 +39,16 @@ func newTestHarness(t *testing.T) *testHarness {
 }
 
 func TestEngineBasicTransition(t *testing.T) {
-	def, err := flowstate.Define("order", "simple").
+	def, err := flowstep.Define("order", "simple").
 		Version(1).
 		States(
-			flowstate.Initial("CREATED"),
-			flowstate.Terminal("DONE"),
+			flowstep.Initial("CREATED"),
+			flowstep.Terminal("DONE"),
 		).
 		Transition("complete",
-			flowstate.From("CREATED"),
-			flowstate.To("DONE"),
-			flowstate.Event("OrderCompleted"),
+			flowstep.From("CREATED"),
+			flowstep.To("DONE"),
+			flowstep.Event("OrderCompleted"),
 		).
 		Build()
 	if err != nil {
@@ -78,15 +78,15 @@ func TestEngineBasicTransition(t *testing.T) {
 }
 
 func TestEngineMultiStepTransition(t *testing.T) {
-	def, err := flowstate.Define("order", "multi").
+	def, err := flowstep.Define("order", "multi").
 		Version(1).
 		States(
-			flowstate.Initial("CREATED"),
-			flowstate.State("PAID"),
-			flowstate.Terminal("SHIPPED"),
+			flowstep.Initial("CREATED"),
+			flowstep.State("PAID"),
+			flowstep.Terminal("SHIPPED"),
 		).
-		Transition("pay", flowstate.From("CREATED"), flowstate.To("PAID"), flowstate.Event("OrderPaid")).
-		Transition("ship", flowstate.From("PAID"), flowstate.To("SHIPPED"), flowstate.Event("OrderShipped")).
+		Transition("pay", flowstep.From("CREATED"), flowstep.To("PAID"), flowstep.Event("OrderPaid")).
+		Transition("ship", flowstep.From("PAID"), flowstep.To("SHIPPED"), flowstep.Event("OrderShipped")).
 		Build()
 	if err != nil {
 		t.Fatalf("failed to build definition: %v", err)
@@ -118,15 +118,15 @@ func TestEngineMultiStepTransition(t *testing.T) {
 }
 
 func TestEngineInvalidTransition(t *testing.T) {
-	def, err := flowstate.Define("order", "simple").
+	def, err := flowstep.Define("order", "simple").
 		Version(1).
 		States(
-			flowstate.Initial("CREATED"),
-			flowstate.State("PAID"),
-			flowstate.Terminal("DONE"),
+			flowstep.Initial("CREATED"),
+			flowstep.State("PAID"),
+			flowstep.Terminal("DONE"),
 		).
-		Transition("pay", flowstate.From("CREATED"), flowstate.To("PAID"), flowstate.Event("OrderPaid")).
-		Transition("finish", flowstate.From("PAID"), flowstate.To("DONE"), flowstate.Event("OrderDone")).
+		Transition("pay", flowstep.From("CREATED"), flowstep.To("PAID"), flowstep.Event("OrderPaid")).
+		Transition("finish", flowstep.From("PAID"), flowstep.To("DONE"), flowstep.Event("OrderDone")).
 		Build()
 	if err != nil {
 		t.Fatalf("failed to build definition: %v", err)
@@ -137,19 +137,19 @@ func TestEngineInvalidTransition(t *testing.T) {
 
 	ctx := context.Background()
 	_, err = h.engine.Transition(ctx, "order", "o-1", "finish", "user-1", nil)
-	if !errors.Is(err, flowstate.ErrInvalidTransition) {
+	if !errors.Is(err, flowstep.ErrInvalidTransition) {
 		t.Errorf("expected ErrInvalidTransition, got %v", err)
 	}
 }
 
 func TestEngineAlreadyTerminal(t *testing.T) {
-	def, err := flowstate.Define("order", "simple").
+	def, err := flowstep.Define("order", "simple").
 		Version(1).
 		States(
-			flowstate.Initial("CREATED"),
-			flowstate.Terminal("DONE"),
+			flowstep.Initial("CREATED"),
+			flowstep.Terminal("DONE"),
 		).
-		Transition("complete", flowstate.From("CREATED"), flowstate.To("DONE"), flowstate.Event("OrderCompleted")).
+		Transition("complete", flowstep.From("CREATED"), flowstep.To("DONE"), flowstep.Event("OrderCompleted")).
 		Build()
 	if err != nil {
 		t.Fatalf("failed to build definition: %v", err)
@@ -166,7 +166,7 @@ func TestEngineAlreadyTerminal(t *testing.T) {
 	}
 
 	_, err = h.engine.Transition(ctx, "order", "o-1", "complete", "user-1", nil)
-	if !errors.Is(err, flowstate.ErrAlreadyTerminal) {
+	if !errors.Is(err, flowstep.ErrAlreadyTerminal) {
 		t.Errorf("expected ErrAlreadyTerminal, got %v", err)
 	}
 }
@@ -181,17 +181,17 @@ func (g *alwaysFailGuard) Check(_ context.Context, _ any, _ map[string]any) erro
 }
 
 func TestEngineGuardRejectsTransition(t *testing.T) {
-	def, err := flowstate.Define("order", "guarded").
+	def, err := flowstep.Define("order", "guarded").
 		Version(1).
 		States(
-			flowstate.Initial("CREATED"),
-			flowstate.Terminal("DONE"),
+			flowstep.Initial("CREATED"),
+			flowstep.Terminal("DONE"),
 		).
 		Transition("complete",
-			flowstate.From("CREATED"),
-			flowstate.To("DONE"),
-			flowstate.Event("OrderCompleted"),
-			flowstate.Guards(&alwaysFailGuard{reason: "not ready"}),
+			flowstep.From("CREATED"),
+			flowstep.To("DONE"),
+			flowstep.Event("OrderCompleted"),
+			flowstep.Guards(&alwaysFailGuard{reason: "not ready"}),
 		).
 		Build()
 	if err != nil {
@@ -203,7 +203,7 @@ func TestEngineGuardRejectsTransition(t *testing.T) {
 
 	ctx := context.Background()
 	_, err = h.engine.Transition(ctx, "order", "o-1", "complete", "user-1", nil)
-	if !errors.Is(err, flowstate.ErrGuardFailed) {
+	if !errors.Is(err, flowstep.ErrGuardFailed) {
 		t.Errorf("expected ErrGuardFailed, got %v", err)
 	}
 
@@ -222,17 +222,17 @@ func (g *passingGuard) Check(_ context.Context, _ any, _ map[string]any) error {
 }
 
 func TestEngineGuardPasses(t *testing.T) {
-	def, err := flowstate.Define("order", "guarded").
+	def, err := flowstep.Define("order", "guarded").
 		Version(1).
 		States(
-			flowstate.Initial("CREATED"),
-			flowstate.Terminal("DONE"),
+			flowstep.Initial("CREATED"),
+			flowstep.Terminal("DONE"),
 		).
 		Transition("complete",
-			flowstate.From("CREATED"),
-			flowstate.To("DONE"),
-			flowstate.Event("OrderCompleted"),
-			flowstate.Guards(&passingGuard{}),
+			flowstep.From("CREATED"),
+			flowstep.To("DONE"),
+			flowstep.Event("OrderCompleted"),
+			flowstep.Guards(&passingGuard{}),
 		).
 		Build()
 	if err != nil {
@@ -253,15 +253,15 @@ func TestEngineGuardPasses(t *testing.T) {
 }
 
 func TestEngineEventChainByCorrelation(t *testing.T) {
-	def, err := flowstate.Define("order", "chain").
+	def, err := flowstep.Define("order", "chain").
 		Version(1).
 		States(
-			flowstate.Initial("CREATED"),
-			flowstate.State("PAID"),
-			flowstate.Terminal("SHIPPED"),
+			flowstep.Initial("CREATED"),
+			flowstep.State("PAID"),
+			flowstep.Terminal("SHIPPED"),
 		).
-		Transition("pay", flowstate.From("CREATED"), flowstate.To("PAID"), flowstate.Event("OrderPaid")).
-		Transition("ship", flowstate.From("PAID"), flowstate.To("SHIPPED"), flowstate.Event("OrderShipped")).
+		Transition("pay", flowstep.From("CREATED"), flowstep.To("PAID"), flowstep.Event("OrderPaid")).
+		Transition("ship", flowstep.From("PAID"), flowstep.To("SHIPPED"), flowstep.Event("OrderShipped")).
 		Build()
 	if err != nil {
 		t.Fatalf("failed to build definition: %v", err)
@@ -329,21 +329,21 @@ func (a *recordingActivity) Execute(ctx context.Context, _ types.ActivityInput) 
 	return &types.ActivityResult{Output: map[string]any{"ok": true}}, nil
 }
 
-func newTestHarnessWithActivities(t *testing.T, activities ...flowstate.Activity) (*testHarness, *memstore.ActivityStore) {
+func newTestHarnessWithActivities(t *testing.T, activities ...flowstep.Activity) (*testHarness, *memstore.ActivityStore) {
 	t.Helper()
 	es := memstore.NewEventStore()
 	is := memstore.NewInstanceStore()
 	as := memstore.NewActivityStore()
 	runner := newRecordingRunner(activities...)
-	engine, err := flowstate.NewEngine(
-		flowstate.WithEventStore(es),
-		flowstate.WithInstanceStore(is),
-		flowstate.WithTxProvider(memstore.NewTxProvider()),
-		flowstate.WithEventBus(chanbus.New()),
-		flowstate.WithActivityStore(as),
-		flowstate.WithActivityRunner(runner),
-		flowstate.WithClock(flowstate.RealClock{}),
-		flowstate.WithHooks(flowstate.NoopHooks{}),
+	engine, err := flowstep.NewEngine(
+		flowstep.WithEventStore(es),
+		flowstep.WithInstanceStore(is),
+		flowstep.WithTxProvider(memstore.NewTxProvider()),
+		flowstep.WithEventBus(chanbus.New()),
+		flowstep.WithActivityStore(as),
+		flowstep.WithActivityRunner(runner),
+		flowstep.WithClock(flowstep.RealClock{}),
+		flowstep.WithHooks(flowstep.NoopHooks{}),
 	)
 	if err != nil {
 		t.Fatalf("failed to create engine: %v", err)
@@ -352,12 +352,12 @@ func newTestHarnessWithActivities(t *testing.T, activities ...flowstate.Activity
 }
 
 type recordingRunner struct {
-	activities map[string]flowstate.Activity
+	activities map[string]flowstep.Activity
 	dispatched []string
 }
 
-func newRecordingRunner(activities ...flowstate.Activity) *recordingRunner {
-	r := &recordingRunner{activities: make(map[string]flowstate.Activity)}
+func newRecordingRunner(activities ...flowstep.Activity) *recordingRunner {
+	r := &recordingRunner{activities: make(map[string]flowstep.Activity)}
 	for _, a := range activities {
 		r.activities[a.Name()] = a
 	}
@@ -370,24 +370,24 @@ func (r *recordingRunner) Dispatch(ctx context.Context, inv types.ActivityInvoca
 		_, err := a.Execute(ctx, inv.Input)
 		return err
 	}
-	return flowstate.ErrActivityNotRegistered
+	return flowstep.ErrActivityNotRegistered
 }
 
 func TestEngineActivityDispatch(t *testing.T) {
 	act := &recordingActivity{name: "send_email"}
 	h, actStore := newTestHarnessWithActivities(t, act)
 
-	def, err := flowstate.Define("order", "with_activity").
+	def, err := flowstep.Define("order", "with_activity").
 		Version(1).
 		States(
-			flowstate.Initial("CREATED"),
-			flowstate.Terminal("DONE"),
+			flowstep.Initial("CREATED"),
+			flowstep.Terminal("DONE"),
 		).
 		Transition("complete",
-			flowstate.From("CREATED"),
-			flowstate.To("DONE"),
-			flowstate.Event("OrderCompleted"),
-			flowstate.Dispatch("send_email"),
+			flowstep.From("CREATED"),
+			flowstep.To("DONE"),
+			flowstep.Event("OrderCompleted"),
+			flowstep.Dispatch("send_email"),
 		).
 		Build()
 	if err != nil {
@@ -431,18 +431,18 @@ func TestEngineMultipleActivities(t *testing.T) {
 	act2 := &recordingActivity{name: "update_crm"}
 	h, _ := newTestHarnessWithActivities(t, act1, act2)
 
-	def, err := flowstate.Define("order", "multi_act").
+	def, err := flowstep.Define("order", "multi_act").
 		Version(1).
 		States(
-			flowstate.Initial("CREATED"),
-			flowstate.Terminal("DONE"),
+			flowstep.Initial("CREATED"),
+			flowstep.Terminal("DONE"),
 		).
 		Transition("complete",
-			flowstate.From("CREATED"),
-			flowstate.To("DONE"),
-			flowstate.Event("OrderCompleted"),
-			flowstate.Dispatch("send_email"),
-			flowstate.Dispatch("update_crm"),
+			flowstep.From("CREATED"),
+			flowstep.To("DONE"),
+			flowstep.Event("OrderCompleted"),
+			flowstep.Dispatch("send_email"),
+			flowstep.Dispatch("update_crm"),
 		).
 		Build()
 	if err != nil {
@@ -471,23 +471,23 @@ func TestEngineMultipleActivities(t *testing.T) {
 // --- Signal tests ---
 
 func TestEngineSignalTransition(t *testing.T) {
-	def, err := flowstate.Define("order", "signal_wf").
+	def, err := flowstep.Define("order", "signal_wf").
 		Version(1).
 		States(
-			flowstate.Initial("CREATED"),
-			flowstate.State("PAYMENT_PENDING"),
-			flowstate.Terminal("PAID"),
+			flowstep.Initial("CREATED"),
+			flowstep.State("PAYMENT_PENDING"),
+			flowstep.Terminal("PAID"),
 		).
 		Transition("start_payment",
-			flowstate.From("CREATED"),
-			flowstate.To("PAYMENT_PENDING"),
-			flowstate.Event("PaymentStarted"),
+			flowstep.From("CREATED"),
+			flowstep.To("PAYMENT_PENDING"),
+			flowstep.Event("PaymentStarted"),
 		).
 		Transition("payment_received",
-			flowstate.From("PAYMENT_PENDING"),
-			flowstate.To("PAID"),
-			flowstate.Event("PaymentReceived"),
-			flowstate.OnSignal("payment_complete"),
+			flowstep.From("PAYMENT_PENDING"),
+			flowstep.To("PAID"),
+			flowstep.Event("PaymentReceived"),
+			flowstep.OnSignal("payment_complete"),
 		).
 		Build()
 	if err != nil {
@@ -524,17 +524,17 @@ func TestEngineSignalTransition(t *testing.T) {
 }
 
 func TestEngineSignalNoMatch(t *testing.T) {
-	def, err := flowstate.Define("order", "signal_wf").
+	def, err := flowstep.Define("order", "signal_wf").
 		Version(1).
 		States(
-			flowstate.Initial("CREATED"),
-			flowstate.Terminal("DONE"),
+			flowstep.Initial("CREATED"),
+			flowstep.Terminal("DONE"),
 		).
 		Transition("complete",
-			flowstate.From("CREATED"),
-			flowstate.To("DONE"),
-			flowstate.Event("Done"),
-			flowstate.OnSignal("finish"),
+			flowstep.From("CREATED"),
+			flowstep.To("DONE"),
+			flowstep.Event("Done"),
+			flowstep.OnSignal("finish"),
 		).
 		Build()
 	if err != nil {
@@ -553,7 +553,7 @@ func TestEngineSignalNoMatch(t *testing.T) {
 		SignalName:          "wrong_signal",
 		ActorID:             "system",
 	})
-	if !errors.Is(err, flowstate.ErrNoMatchingSignal) {
+	if !errors.Is(err, flowstep.ErrNoMatchingSignal) {
 		t.Errorf("expected ErrNoMatchingSignal, got %v", err)
 	}
 }
@@ -565,14 +565,14 @@ func newTestHarnessWithTasks(t *testing.T) (*testHarness, *memstore.TaskStore) {
 	es := memstore.NewEventStore()
 	is := memstore.NewInstanceStore()
 	ts := memstore.NewTaskStore()
-	engine, err := flowstate.NewEngine(
-		flowstate.WithEventStore(es),
-		flowstate.WithInstanceStore(is),
-		flowstate.WithTaskStore(ts),
-		flowstate.WithTxProvider(memstore.NewTxProvider()),
-		flowstate.WithEventBus(chanbus.New()),
-		flowstate.WithClock(flowstate.RealClock{}),
-		flowstate.WithHooks(flowstate.NoopHooks{}),
+	engine, err := flowstep.NewEngine(
+		flowstep.WithEventStore(es),
+		flowstep.WithInstanceStore(is),
+		flowstep.WithTaskStore(ts),
+		flowstep.WithTxProvider(memstore.NewTxProvider()),
+		flowstep.WithEventBus(chanbus.New()),
+		flowstep.WithClock(flowstep.RealClock{}),
+		flowstep.WithHooks(flowstep.NoopHooks{}),
 	)
 	if err != nil {
 		t.Fatalf("failed to create engine: %v", err)
@@ -581,35 +581,35 @@ func newTestHarnessWithTasks(t *testing.T) (*testHarness, *memstore.TaskStore) {
 }
 
 func TestEngineWaitStateAndTaskCompletion(t *testing.T) {
-	def, err := flowstate.Define("approval", "review").
+	def, err := flowstep.Define("approval", "review").
 		Version(1).
 		States(
-			flowstate.Initial("SUBMITTED"),
-			flowstate.WaitState("AWAITING_REVIEW"),
-			flowstate.Terminal("APPROVED"),
-			flowstate.Terminal("REJECTED"),
+			flowstep.Initial("SUBMITTED"),
+			flowstep.WaitState("AWAITING_REVIEW"),
+			flowstep.Terminal("APPROVED"),
+			flowstep.Terminal("REJECTED"),
 		).
 		Transition("submit_for_review",
-			flowstate.From("SUBMITTED"),
-			flowstate.To("AWAITING_REVIEW"),
-			flowstate.Event("SubmittedForReview"),
-			flowstate.EmitTask(types.TaskDef{
+			flowstep.From("SUBMITTED"),
+			flowstep.To("AWAITING_REVIEW"),
+			flowstep.Event("SubmittedForReview"),
+			flowstep.EmitTask(types.TaskDef{
 				Type:        "review_decision",
 				Description: "Please review and approve or reject",
 				Options:     []string{"approve", "reject"},
 			}),
 		).
 		Transition("approve",
-			flowstate.From("AWAITING_REVIEW"),
-			flowstate.To("APPROVED"),
-			flowstate.Event("Approved"),
-			flowstate.OnTaskCompleted("review_decision"),
+			flowstep.From("AWAITING_REVIEW"),
+			flowstep.To("APPROVED"),
+			flowstep.Event("Approved"),
+			flowstep.OnTaskCompleted("review_decision"),
 		).
 		Transition("reject",
-			flowstate.From("AWAITING_REVIEW"),
-			flowstate.To("REJECTED"),
-			flowstate.Event("Rejected"),
-			flowstate.OnTaskCompleted("review_decision"),
+			flowstep.From("AWAITING_REVIEW"),
+			flowstep.To("REJECTED"),
+			flowstep.Event("Rejected"),
+			flowstep.OnTaskCompleted("review_decision"),
 		).
 		Build()
 	if err != nil {
@@ -655,35 +655,35 @@ func TestEngineWaitStateAndTaskCompletion(t *testing.T) {
 }
 
 func TestEngineTaskReject(t *testing.T) {
-	def, err := flowstate.Define("approval", "review").
+	def, err := flowstep.Define("approval", "review").
 		Version(1).
 		States(
-			flowstate.Initial("SUBMITTED"),
-			flowstate.WaitState("AWAITING_REVIEW"),
-			flowstate.Terminal("APPROVED"),
-			flowstate.Terminal("REJECTED"),
+			flowstep.Initial("SUBMITTED"),
+			flowstep.WaitState("AWAITING_REVIEW"),
+			flowstep.Terminal("APPROVED"),
+			flowstep.Terminal("REJECTED"),
 		).
 		Transition("submit_for_review",
-			flowstate.From("SUBMITTED"),
-			flowstate.To("AWAITING_REVIEW"),
-			flowstate.Event("SubmittedForReview"),
-			flowstate.EmitTask(types.TaskDef{
+			flowstep.From("SUBMITTED"),
+			flowstep.To("AWAITING_REVIEW"),
+			flowstep.Event("SubmittedForReview"),
+			flowstep.EmitTask(types.TaskDef{
 				Type:        "review_decision",
 				Description: "Review it",
 				Options:     []string{"approve", "reject"},
 			}),
 		).
 		Transition("approve",
-			flowstate.From("AWAITING_REVIEW"),
-			flowstate.To("APPROVED"),
-			flowstate.Event("Approved"),
-			flowstate.OnTaskCompleted("review_decision"),
+			flowstep.From("AWAITING_REVIEW"),
+			flowstep.To("APPROVED"),
+			flowstep.Event("Approved"),
+			flowstep.OnTaskCompleted("review_decision"),
 		).
 		Transition("reject",
-			flowstate.From("AWAITING_REVIEW"),
-			flowstate.To("REJECTED"),
-			flowstate.Event("Rejected"),
-			flowstate.OnTaskCompleted("review_decision"),
+			flowstep.From("AWAITING_REVIEW"),
+			flowstep.To("REJECTED"),
+			flowstep.Event("Rejected"),
+			flowstep.OnTaskCompleted("review_decision"),
 		).
 		Build()
 	if err != nil {
@@ -724,29 +724,29 @@ func (c *amountCondition) Evaluate(_ context.Context, _ any, params map[string]a
 }
 
 func TestEngineConditionalRouting(t *testing.T) {
-	def, err := flowstate.Define("order", "routed").
+	def, err := flowstep.Define("order", "routed").
 		Version(1).
 		States(
-			flowstate.Initial("CREATED"),
-			flowstate.State("STANDARD_REVIEW"),
-			flowstate.State("VIP_REVIEW"),
-			flowstate.Terminal("DONE"),
+			flowstep.Initial("CREATED"),
+			flowstep.State("STANDARD_REVIEW"),
+			flowstep.State("VIP_REVIEW"),
+			flowstep.Terminal("DONE"),
 		).
 		Transition("route_review",
-			flowstate.From("CREATED"),
-			flowstate.Event("ReviewRouted"),
-			flowstate.Route(flowstate.When(&amountCondition{threshold: 1000}), flowstate.To("VIP_REVIEW")),
-			flowstate.Route(flowstate.Default(), flowstate.To("STANDARD_REVIEW")),
+			flowstep.From("CREATED"),
+			flowstep.Event("ReviewRouted"),
+			flowstep.Route(flowstep.When(&amountCondition{threshold: 1000}), flowstep.To("VIP_REVIEW")),
+			flowstep.Route(flowstep.Default(), flowstep.To("STANDARD_REVIEW")),
 		).
 		Transition("finish_standard",
-			flowstate.From("STANDARD_REVIEW"),
-			flowstate.To("DONE"),
-			flowstate.Event("Done"),
+			flowstep.From("STANDARD_REVIEW"),
+			flowstep.To("DONE"),
+			flowstep.Event("Done"),
 		).
 		Transition("finish_vip",
-			flowstate.From("VIP_REVIEW"),
-			flowstate.To("DONE"),
-			flowstate.Event("Done"),
+			flowstep.From("VIP_REVIEW"),
+			flowstep.To("DONE"),
+			flowstep.Event("Done"),
 		).
 		Build()
 	if err != nil {
@@ -778,22 +778,22 @@ func TestEngineConditionalRouting(t *testing.T) {
 
 func TestEngineConditionalRoutingNoMatch(t *testing.T) {
 	// Route with condition but no default — should fail if condition doesn't match
-	def, err := flowstate.Define("order", "no_default").
+	def, err := flowstep.Define("order", "no_default").
 		Version(1).
 		States(
-			flowstate.Initial("CREATED"),
-			flowstate.State("VIP"),
-			flowstate.Terminal("DONE"),
+			flowstep.Initial("CREATED"),
+			flowstep.State("VIP"),
+			flowstep.Terminal("DONE"),
 		).
 		Transition("route",
-			flowstate.From("CREATED"),
-			flowstate.Event("Routed"),
-			flowstate.Route(flowstate.When(&amountCondition{threshold: 1000}), flowstate.To("VIP")),
+			flowstep.From("CREATED"),
+			flowstep.Event("Routed"),
+			flowstep.Route(flowstep.When(&amountCondition{threshold: 1000}), flowstep.To("VIP")),
 		).
 		Transition("finish",
-			flowstate.From("VIP"),
-			flowstate.To("DONE"),
-			flowstate.Event("Done"),
+			flowstep.From("VIP"),
+			flowstep.To("DONE"),
+			flowstep.Event("Done"),
 		).
 		Build()
 	if err != nil {
@@ -805,7 +805,7 @@ func TestEngineConditionalRoutingNoMatch(t *testing.T) {
 	ctx := context.Background()
 
 	_, err = h.engine.Transition(ctx, "order", "o-1", "route", "user-1", map[string]any{"amount": 100.0})
-	if !errors.Is(err, flowstate.ErrNoMatchingRoute) {
+	if !errors.Is(err, flowstep.ErrNoMatchingRoute) {
 		t.Errorf("expected ErrNoMatchingRoute, got %v", err)
 	}
 }
@@ -817,14 +817,14 @@ func newFullTestHarness(t *testing.T) (*testHarness, *memstore.ChildStore) {
 	es := memstore.NewEventStore()
 	is := memstore.NewInstanceStore()
 	cs := memstore.NewChildStore()
-	engine, err := flowstate.NewEngine(
-		flowstate.WithEventStore(es),
-		flowstate.WithInstanceStore(is),
-		flowstate.WithChildStore(cs),
-		flowstate.WithTxProvider(memstore.NewTxProvider()),
-		flowstate.WithEventBus(chanbus.New()),
-		flowstate.WithClock(flowstate.RealClock{}),
-		flowstate.WithHooks(flowstate.NoopHooks{}),
+	engine, err := flowstep.NewEngine(
+		flowstep.WithEventStore(es),
+		flowstep.WithInstanceStore(is),
+		flowstep.WithChildStore(cs),
+		flowstep.WithTxProvider(memstore.NewTxProvider()),
+		flowstep.WithEventBus(chanbus.New()),
+		flowstep.WithClock(flowstep.RealClock{}),
+		flowstep.WithHooks(flowstep.NoopHooks{}),
 	)
 	if err != nil {
 		t.Fatalf("failed to create engine: %v", err)
@@ -834,43 +834,43 @@ func newFullTestHarness(t *testing.T) (*testHarness, *memstore.ChildStore) {
 
 func TestEngineSpawnChild(t *testing.T) {
 	// Parent workflow spawns a child when transitioning
-	parentDef, err := flowstate.Define("order", "parent_wf").
+	parentDef, err := flowstep.Define("order", "parent_wf").
 		Version(1).
 		States(
-			flowstate.Initial("CREATED"),
-			flowstate.State("PROCESSING"),
-			flowstate.Terminal("DONE"),
+			flowstep.Initial("CREATED"),
+			flowstep.State("PROCESSING"),
+			flowstep.Terminal("DONE"),
 		).
 		Transition("start_processing",
-			flowstate.From("CREATED"),
-			flowstate.To("PROCESSING"),
-			flowstate.Event("ProcessingStarted"),
-			flowstate.SpawnChild(types.ChildDef{
+			flowstep.From("CREATED"),
+			flowstep.To("PROCESSING"),
+			flowstep.Event("ProcessingStarted"),
+			flowstep.SpawnChild(types.ChildDef{
 				WorkflowType: "payment",
 				InputFrom:    "order_data",
 			}),
 		).
 		Transition("processing_done",
-			flowstate.From("PROCESSING"),
-			flowstate.To("DONE"),
-			flowstate.Event("ProcessingDone"),
-			flowstate.OnChildCompleted("payment"),
+			flowstep.From("PROCESSING"),
+			flowstep.To("DONE"),
+			flowstep.Event("ProcessingDone"),
+			flowstep.OnChildCompleted("payment"),
 		).
 		Build()
 	if err != nil {
 		t.Fatalf("failed to build parent definition: %v", err)
 	}
 
-	childDef, err := flowstate.Define("payment", "payment_wf").
+	childDef, err := flowstep.Define("payment", "payment_wf").
 		Version(1).
 		States(
-			flowstate.Initial("PENDING"),
-			flowstate.Terminal("COMPLETED"),
+			flowstep.Initial("PENDING"),
+			flowstep.Terminal("COMPLETED"),
 		).
 		Transition("complete",
-			flowstate.From("PENDING"),
-			flowstate.To("COMPLETED"),
-			flowstate.Event("PaymentCompleted"),
+			flowstep.From("PENDING"),
+			flowstep.To("COMPLETED"),
+			flowstep.Event("PaymentCompleted"),
 		).
 		Build()
 	if err != nil {
@@ -925,18 +925,18 @@ func TestEngineSpawnChild(t *testing.T) {
 
 func TestEngineSpawnChildren_JoinAll(t *testing.T) {
 	// Parent spawns 3 children and waits for all to complete (JoinAll)
-	parentDef, err := flowstate.Define("batch", "batch_wf").
+	parentDef, err := flowstep.Define("batch", "batch_wf").
 		Version(1).
 		States(
-			flowstate.Initial("CREATED"),
-			flowstate.State("PROCESSING"),
-			flowstate.Terminal("DONE"),
+			flowstep.Initial("CREATED"),
+			flowstep.State("PROCESSING"),
+			flowstep.Terminal("DONE"),
 		).
 		Transition("start_batch",
-			flowstate.From("CREATED"),
-			flowstate.To("PROCESSING"),
-			flowstate.Event("BatchStarted"),
-			flowstate.SpawnChildren(types.ChildrenDef{
+			flowstep.From("CREATED"),
+			flowstep.To("PROCESSING"),
+			flowstep.Event("BatchStarted"),
+			flowstep.SpawnChildren(types.ChildrenDef{
 				WorkflowType: "job",
 				InputsFn: func(aggregate any) []map[string]any {
 					return []map[string]any{
@@ -949,26 +949,26 @@ func TestEngineSpawnChildren_JoinAll(t *testing.T) {
 			}),
 		).
 		Transition("batch_done",
-			flowstate.From("PROCESSING"),
-			flowstate.To("DONE"),
-			flowstate.Event("BatchDone"),
-			flowstate.OnChildrenJoined(),
+			flowstep.From("PROCESSING"),
+			flowstep.To("DONE"),
+			flowstep.Event("BatchDone"),
+			flowstep.OnChildrenJoined(),
 		).
 		Build()
 	if err != nil {
 		t.Fatalf("failed to build parent definition: %v", err)
 	}
 
-	childDef, err := flowstate.Define("job", "job_wf").
+	childDef, err := flowstep.Define("job", "job_wf").
 		Version(1).
 		States(
-			flowstate.Initial("PENDING"),
-			flowstate.Terminal("COMPLETED"),
+			flowstep.Initial("PENDING"),
+			flowstep.Terminal("COMPLETED"),
 		).
 		Transition("finish",
-			flowstate.From("PENDING"),
-			flowstate.To("COMPLETED"),
-			flowstate.Event("JobFinished"),
+			flowstep.From("PENDING"),
+			flowstep.To("COMPLETED"),
+			flowstep.Event("JobFinished"),
 		).
 		Build()
 	if err != nil {
@@ -1054,44 +1054,44 @@ func TestEngineVersionCoexistence(t *testing.T) {
 	// Existing instances (created under v1) should continue using v1 transitions.
 	// New instances should use v2.
 
-	defV1, err := flowstate.Define("ticket", "support").
+	defV1, err := flowstep.Define("ticket", "support").
 		Version(1).
 		States(
-			flowstate.Initial("OPEN"),
-			flowstate.State("REVIEWING"),
-			flowstate.Terminal("CLOSED"),
+			flowstep.Initial("OPEN"),
+			flowstep.State("REVIEWING"),
+			flowstep.Terminal("CLOSED"),
 		).
 		Transition("review",
-			flowstate.From("OPEN"),
-			flowstate.To("REVIEWING"),
-			flowstate.Event("TicketReviewing"),
+			flowstep.From("OPEN"),
+			flowstep.To("REVIEWING"),
+			flowstep.Event("TicketReviewing"),
 		).
 		Transition("close",
-			flowstate.From("REVIEWING"),
-			flowstate.To("CLOSED"),
-			flowstate.Event("TicketClosed"),
+			flowstep.From("REVIEWING"),
+			flowstep.To("CLOSED"),
+			flowstep.Event("TicketClosed"),
 		).
 		Build()
 	if err != nil {
 		t.Fatalf("v1 build failed: %v", err)
 	}
 
-	defV2, err := flowstate.Define("ticket", "support").
+	defV2, err := flowstep.Define("ticket", "support").
 		Version(2).
 		States(
-			flowstate.Initial("OPEN"),
-			flowstate.State("IN_PROGRESS"),
-			flowstate.Terminal("RESOLVED"),
+			flowstep.Initial("OPEN"),
+			flowstep.State("IN_PROGRESS"),
+			flowstep.Terminal("RESOLVED"),
 		).
 		Transition("start_work",
-			flowstate.From("OPEN"),
-			flowstate.To("IN_PROGRESS"),
-			flowstate.Event("WorkStarted"),
+			flowstep.From("OPEN"),
+			flowstep.To("IN_PROGRESS"),
+			flowstep.Event("WorkStarted"),
 		).
 		Transition("resolve",
-			flowstate.From("IN_PROGRESS"),
-			flowstate.To("RESOLVED"),
-			flowstate.Event("TicketResolved"),
+			flowstep.From("IN_PROGRESS"),
+			flowstep.To("RESOLVED"),
+			flowstep.Event("TicketResolved"),
 		).
 		Build()
 	if err != nil {
@@ -1150,7 +1150,7 @@ func TestEngineVersionCoexistence(t *testing.T) {
 	if err == nil {
 		t.Error("expected error: 'close' transition doesn't exist in v2")
 	}
-	if !errors.Is(err, flowstate.ErrInvalidTransition) {
+	if !errors.Is(err, flowstep.ErrInvalidTransition) {
 		t.Errorf("expected ErrInvalidTransition, got: %v", err)
 	}
 }
@@ -1180,27 +1180,27 @@ func TestEngineHooksCalledOnTransition(t *testing.T) {
 	hooks := &recordingHooks{}
 	es := memstore.NewEventStore()
 	is := memstore.NewInstanceStore()
-	engine, err := flowstate.NewEngine(
-		flowstate.WithEventStore(es),
-		flowstate.WithInstanceStore(is),
-		flowstate.WithTxProvider(memstore.NewTxProvider()),
-		flowstate.WithEventBus(chanbus.New()),
-		flowstate.WithHooks(hooks),
+	engine, err := flowstep.NewEngine(
+		flowstep.WithEventStore(es),
+		flowstep.WithInstanceStore(is),
+		flowstep.WithTxProvider(memstore.NewTxProvider()),
+		flowstep.WithEventBus(chanbus.New()),
+		flowstep.WithHooks(hooks),
 	)
 	if err != nil {
 		t.Fatalf("failed to create engine: %v", err)
 	}
 
-	def, err := flowstate.Define("order", "simple").
+	def, err := flowstep.Define("order", "simple").
 		Version(1).
 		States(
-			flowstate.Initial("CREATED"),
-			flowstate.Terminal("DONE"),
+			flowstep.Initial("CREATED"),
+			flowstep.Terminal("DONE"),
 		).
 		Transition("complete",
-			flowstate.From("CREATED"),
-			flowstate.To("DONE"),
-			flowstate.Event("OrderCompleted"),
+			flowstep.From("CREATED"),
+			flowstep.To("DONE"),
+			flowstep.Event("OrderCompleted"),
 		).
 		Build()
 	if err != nil {
@@ -1225,27 +1225,27 @@ func TestEngineHooksCalledOnGuardFailed(t *testing.T) {
 	hooks := &recordingHooks{}
 	es := memstore.NewEventStore()
 	is := memstore.NewInstanceStore()
-	engine, err := flowstate.NewEngine(
-		flowstate.WithEventStore(es),
-		flowstate.WithInstanceStore(is),
-		flowstate.WithTxProvider(memstore.NewTxProvider()),
-		flowstate.WithHooks(hooks),
+	engine, err := flowstep.NewEngine(
+		flowstep.WithEventStore(es),
+		flowstep.WithInstanceStore(is),
+		flowstep.WithTxProvider(memstore.NewTxProvider()),
+		flowstep.WithHooks(hooks),
 	)
 	if err != nil {
 		t.Fatalf("failed to create engine: %v", err)
 	}
 
-	def, err := flowstate.Define("order", "guarded").
+	def, err := flowstep.Define("order", "guarded").
 		Version(1).
 		States(
-			flowstate.Initial("CREATED"),
-			flowstate.Terminal("DONE"),
+			flowstep.Initial("CREATED"),
+			flowstep.Terminal("DONE"),
 		).
 		Transition("complete",
-			flowstate.From("CREATED"),
-			flowstate.To("DONE"),
-			flowstate.Event("OrderCompleted"),
-			flowstate.Guards(&alwaysFailGuard{}),
+			flowstep.From("CREATED"),
+			flowstep.To("DONE"),
+			flowstep.Event("OrderCompleted"),
+			flowstep.Guards(&alwaysFailGuard{}),
 		).
 		Build()
 	if err != nil {
@@ -1270,29 +1270,29 @@ func TestEngineHooksCalledOnActivityDispatched(t *testing.T) {
 	act := &recordingActivity{name: "send_email"}
 	runner := newRecordingRunner(act)
 
-	engine, err := flowstate.NewEngine(
-		flowstate.WithEventStore(es),
-		flowstate.WithInstanceStore(is),
-		flowstate.WithTxProvider(memstore.NewTxProvider()),
-		flowstate.WithActivityRunner(runner),
-		flowstate.WithActivityStore(memstore.NewActivityStore()),
-		flowstate.WithHooks(hooks),
+	engine, err := flowstep.NewEngine(
+		flowstep.WithEventStore(es),
+		flowstep.WithInstanceStore(is),
+		flowstep.WithTxProvider(memstore.NewTxProvider()),
+		flowstep.WithActivityRunner(runner),
+		flowstep.WithActivityStore(memstore.NewActivityStore()),
+		flowstep.WithHooks(hooks),
 	)
 	if err != nil {
 		t.Fatalf("failed to create engine: %v", err)
 	}
 
-	def, err := flowstate.Define("order", "with_activity").
+	def, err := flowstep.Define("order", "with_activity").
 		Version(1).
 		States(
-			flowstate.Initial("CREATED"),
-			flowstate.Terminal("DONE"),
+			flowstep.Initial("CREATED"),
+			flowstep.Terminal("DONE"),
 		).
 		Transition("complete",
-			flowstate.From("CREATED"),
-			flowstate.To("DONE"),
-			flowstate.Event("OrderCompleted"),
-			flowstate.Dispatch("send_email"),
+			flowstep.From("CREATED"),
+			flowstep.To("DONE"),
+			flowstep.Event("OrderCompleted"),
+			flowstep.Dispatch("send_email"),
 		).
 		Build()
 	if err != nil {
@@ -1315,28 +1315,28 @@ func TestEngineHooksCalledOnActivityDispatched(t *testing.T) {
 
 func TestEngineForceState(t *testing.T) {
 	h := newTestHarness(t)
-	def, err := flowstate.Define("order", "simple").
+	def, err := flowstep.Define("order", "simple").
 		Version(1).
 		States(
-			flowstate.Initial("CREATED"),
-			flowstate.State("PROCESSING"),
-			flowstate.Terminal("DONE"),
-			flowstate.Terminal("CANCELLED"),
+			flowstep.Initial("CREATED"),
+			flowstep.State("PROCESSING"),
+			flowstep.Terminal("DONE"),
+			flowstep.Terminal("CANCELLED"),
 		).
 		Transition("process",
-			flowstate.From("CREATED"),
-			flowstate.To("PROCESSING"),
-			flowstate.Event("OrderProcessing"),
+			flowstep.From("CREATED"),
+			flowstep.To("PROCESSING"),
+			flowstep.Event("OrderProcessing"),
 		).
 		Transition("complete",
-			flowstate.From("PROCESSING"),
-			flowstate.To("DONE"),
-			flowstate.Event("OrderCompleted"),
+			flowstep.From("PROCESSING"),
+			flowstep.To("DONE"),
+			flowstep.Event("OrderCompleted"),
 		).
 		Transition("cancel",
-			flowstate.From("CREATED", "PROCESSING"),
-			flowstate.To("CANCELLED"),
-			flowstate.Event("OrderCancelled"),
+			flowstep.From("CREATED", "PROCESSING"),
+			flowstep.To("CANCELLED"),
+			flowstep.Event("OrderCancelled"),
 		).
 		Build()
 	if err != nil {
@@ -1376,16 +1376,16 @@ func TestEngineForceState(t *testing.T) {
 
 func TestEngineForceStateFromTerminal(t *testing.T) {
 	h := newTestHarness(t)
-	def, err := flowstate.Define("order", "simple").
+	def, err := flowstep.Define("order", "simple").
 		Version(1).
 		States(
-			flowstate.Initial("CREATED"),
-			flowstate.Terminal("DONE"),
+			flowstep.Initial("CREATED"),
+			flowstep.Terminal("DONE"),
 		).
 		Transition("complete",
-			flowstate.From("CREATED"),
-			flowstate.To("DONE"),
-			flowstate.Event("OrderCompleted"),
+			flowstep.From("CREATED"),
+			flowstep.To("DONE"),
+			flowstep.Event("OrderCompleted"),
 		).
 		Build()
 	if err != nil {
@@ -1413,16 +1413,16 @@ func TestEngineForceStateFromTerminal(t *testing.T) {
 
 func TestEngineShutdown(t *testing.T) {
 	h := newTestHarness(t)
-	def, err := flowstate.Define("order", "simple").
+	def, err := flowstep.Define("order", "simple").
 		Version(1).
 		States(
-			flowstate.Initial("CREATED"),
-			flowstate.Terminal("DONE"),
+			flowstep.Initial("CREATED"),
+			flowstep.Terminal("DONE"),
 		).
 		Transition("complete",
-			flowstate.From("CREATED"),
-			flowstate.To("DONE"),
-			flowstate.Event("OrderCompleted"),
+			flowstep.From("CREATED"),
+			flowstep.To("DONE"),
+			flowstep.Event("OrderCompleted"),
 		).
 		Build()
 	if err != nil {
@@ -1449,7 +1449,7 @@ func TestEngineShutdown(t *testing.T) {
 	if err == nil {
 		t.Error("expected error after shutdown")
 	}
-	if !errors.Is(err, flowstate.ErrEngineShutdown) {
+	if !errors.Is(err, flowstep.ErrEngineShutdown) {
 		t.Errorf("expected ErrEngineShutdown, got: %v", err)
 	}
 }
@@ -1457,24 +1457,24 @@ func TestEngineShutdown(t *testing.T) {
 // TestEngineConcurrentRegister verifies no data race when Register is called
 // concurrently with Transition (which calls definitionFor). Must be run with -race.
 func TestEngineConcurrentRegister(t *testing.T) {
-	def1, err := flowstate.Define("order", "v1").
+	def1, err := flowstep.Define("order", "v1").
 		Version(1).
 		States(
-			flowstate.Initial("CREATED"),
-			flowstate.Terminal("DONE"),
+			flowstep.Initial("CREATED"),
+			flowstep.Terminal("DONE"),
 		).
-		Transition("complete", flowstate.From("CREATED"), flowstate.To("DONE"), flowstate.Event("Completed")).
+		Transition("complete", flowstep.From("CREATED"), flowstep.To("DONE"), flowstep.Event("Completed")).
 		Build()
 	if err != nil {
 		t.Fatalf("build def1: %v", err)
 	}
-	def2, err := flowstate.Define("order", "v2").
+	def2, err := flowstep.Define("order", "v2").
 		Version(2).
 		States(
-			flowstate.Initial("CREATED"),
-			flowstate.Terminal("DONE"),
+			flowstep.Initial("CREATED"),
+			flowstep.Terminal("DONE"),
 		).
-		Transition("complete", flowstate.From("CREATED"), flowstate.To("DONE"), flowstate.Event("Completed")).
+		Transition("complete", flowstep.From("CREATED"), flowstep.To("DONE"), flowstep.Event("Completed")).
 		Build()
 	if err != nil {
 		t.Fatalf("build def2: %v", err)
@@ -1509,17 +1509,17 @@ func TestEngineConcurrentRegister(t *testing.T) {
 
 // TestEngineSignalReturnsErrEngineShutdown verifies Signal returns ErrEngineShutdown after Shutdown.
 func TestEngineSignalReturnsErrEngineShutdown(t *testing.T) {
-	def, err := flowstate.Define("order", "signal-test").
+	def, err := flowstep.Define("order", "signal-test").
 		Version(1).
 		States(
-			flowstate.Initial("WAITING"),
-			flowstate.Terminal("DONE"),
+			flowstep.Initial("WAITING"),
+			flowstep.Terminal("DONE"),
 		).
 		Transition("done",
-			flowstate.From("WAITING"),
-			flowstate.To("DONE"),
-			flowstate.OnSignal("finish"),
-			flowstate.Event("Finished"),
+			flowstep.From("WAITING"),
+			flowstep.To("DONE"),
+			flowstep.OnSignal("finish"),
+			flowstep.Event("Finished"),
 		).
 		Build()
 	if err != nil {
@@ -1548,20 +1548,20 @@ func TestEngineSignalReturnsErrEngineShutdown(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error from Signal after shutdown")
 	}
-	if !errors.Is(err, flowstate.ErrEngineShutdown) {
+	if !errors.Is(err, flowstep.ErrEngineShutdown) {
 		t.Errorf("expected ErrEngineShutdown, got: %v", err)
 	}
 }
 
 // TestEngineForceStateReturnsErrEngineShutdown verifies ForceState returns ErrEngineShutdown after Shutdown.
 func TestEngineForceStateReturnsErrEngineShutdown(t *testing.T) {
-	def, err := flowstate.Define("order", "force-test").
+	def, err := flowstep.Define("order", "force-test").
 		Version(1).
 		States(
-			flowstate.Initial("CREATED"),
-			flowstate.Terminal("DONE"),
+			flowstep.Initial("CREATED"),
+			flowstep.Terminal("DONE"),
 		).
-		Transition("complete", flowstate.From("CREATED"), flowstate.To("DONE"), flowstate.Event("Completed")).
+		Transition("complete", flowstep.From("CREATED"), flowstep.To("DONE"), flowstep.Event("Completed")).
 		Build()
 	if err != nil {
 		t.Fatalf("build: %v", err)
@@ -1581,7 +1581,7 @@ func TestEngineForceStateReturnsErrEngineShutdown(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error from ForceState after shutdown")
 	}
-	if !errors.Is(err, flowstate.ErrEngineShutdown) {
+	if !errors.Is(err, flowstep.ErrEngineShutdown) {
 		t.Errorf("expected ErrEngineShutdown, got: %v", err)
 	}
 }
@@ -1593,22 +1593,22 @@ func (b *failingEventBus) Emit(_ context.Context, _ types.DomainEvent) error { r
 
 // captureHooks records OnPostCommitError calls.
 type captureHooks struct {
-	flowstate.NoopHooks
-	postCommitErrors []flowstate.PostCommitWarning
+	flowstep.NoopHooks
+	postCommitErrors []flowstep.PostCommitWarning
 }
 
 func (h *captureHooks) OnPostCommitError(_ context.Context, operation string, err error) {
-	h.postCommitErrors = append(h.postCommitErrors, flowstate.PostCommitWarning{Operation: operation, Err: err})
+	h.postCommitErrors = append(h.postCommitErrors, flowstep.PostCommitWarning{Operation: operation, Err: err})
 }
 
 func TestEngineOnPostCommitErrorHookFires(t *testing.T) {
-	def, err := flowstate.Define("order", "hook-test").
+	def, err := flowstep.Define("order", "hook-test").
 		Version(1).
 		States(
-			flowstate.Initial("CREATED"),
-			flowstate.Terminal("DONE"),
+			flowstep.Initial("CREATED"),
+			flowstep.Terminal("DONE"),
 		).
-		Transition("complete", flowstate.From("CREATED"), flowstate.To("DONE"), flowstate.Event("Completed")).
+		Transition("complete", flowstep.From("CREATED"), flowstep.To("DONE"), flowstep.Event("Completed")).
 		Build()
 	if err != nil {
 		t.Fatalf("build: %v", err)
@@ -1618,13 +1618,13 @@ func TestEngineOnPostCommitErrorHookFires(t *testing.T) {
 	hooks := &captureHooks{}
 	es := memstore.NewEventStore()
 	is := memstore.NewInstanceStore()
-	engine, err := flowstate.NewEngine(
-		flowstate.WithEventStore(es),
-		flowstate.WithInstanceStore(is),
-		flowstate.WithTxProvider(memstore.NewTxProvider()),
-		flowstate.WithEventBus(&failingEventBus{err: busErr}),
-		flowstate.WithClock(flowstate.RealClock{}),
-		flowstate.WithHooks(hooks),
+	engine, err := flowstep.NewEngine(
+		flowstep.WithEventStore(es),
+		flowstep.WithInstanceStore(is),
+		flowstep.WithTxProvider(memstore.NewTxProvider()),
+		flowstep.WithEventBus(&failingEventBus{err: busErr}),
+		flowstep.WithClock(flowstep.RealClock{}),
+		flowstep.WithHooks(hooks),
 	)
 	if err != nil {
 		t.Fatalf("create engine: %v", err)
@@ -1661,13 +1661,13 @@ func TestEngineOnPostCommitErrorHookFires(t *testing.T) {
 
 // TestEngineCompleteTaskReturnsErrEngineShutdown verifies CompleteTask returns ErrEngineShutdown after Shutdown.
 func TestEngineCompleteTaskReturnsErrEngineShutdown(t *testing.T) {
-	def, err := flowstate.Define("order", "completetask-shutdown-test").
+	def, err := flowstep.Define("order", "completetask-shutdown-test").
 		Version(1).
 		States(
-			flowstate.Initial("CREATED"),
-			flowstate.Terminal("DONE"),
+			flowstep.Initial("CREATED"),
+			flowstep.Terminal("DONE"),
 		).
-		Transition("complete", flowstate.From("CREATED"), flowstate.To("DONE"), flowstate.Event("Completed")).
+		Transition("complete", flowstep.From("CREATED"), flowstep.To("DONE"), flowstep.Event("Completed")).
 		Build()
 	if err != nil {
 		t.Fatalf("build: %v", err)
@@ -1687,7 +1687,7 @@ func TestEngineCompleteTaskReturnsErrEngineShutdown(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error from CompleteTask after shutdown")
 	}
-	if !errors.Is(err, flowstate.ErrEngineShutdown) {
+	if !errors.Is(err, flowstep.ErrEngineShutdown) {
 		t.Errorf("expected ErrEngineShutdown, got: %v", err)
 	}
 }

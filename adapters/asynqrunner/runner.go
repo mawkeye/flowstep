@@ -8,12 +8,12 @@ import (
 	"fmt"
 
 	"github.com/hibiken/asynq"
-	"github.com/mawkeye/flowstate/types"
+	"github.com/mawkeye/flowstep/types"
 )
 
-const taskTypePrefix = "flowstate:activity:"
+const taskTypePrefix = "flowstep:activity:"
 
-// Runner implements flowstate.ActivityRunner using asynq.
+// Runner implements flowstep.ActivityRunner using asynq.
 type Runner struct {
 	client *asynq.Client
 }

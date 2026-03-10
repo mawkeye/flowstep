@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/mawkeye/flowstate"
-	"github.com/mawkeye/flowstate/types"
+	"github.com/mawkeye/flowstep"
+	"github.com/mawkeye/flowstep/types"
 )
 
-// InstanceStore is an in-memory implementation of flowstate.InstanceStore.
+// InstanceStore is an in-memory implementation of flowstep.InstanceStore.
 type InstanceStore struct {
 	mu        sync.RWMutex
 	instances map[string]types.WorkflowInstance // key: aggregateType:aggregateID
@@ -31,7 +31,7 @@ func (s *InstanceStore) Get(_ context.Context, aggregateType, aggregateID string
 	defer s.mu.RUnlock()
 	inst, ok := s.instances[key(aggregateType, aggregateID)]
 	if !ok {
-		return nil, flowstate.ErrInstanceNotFound
+		return nil, flowstep.ErrInstanceNotFound
 	}
 	copy := inst
 	return &copy, nil
@@ -53,12 +53,12 @@ func (s *InstanceStore) Update(_ context.Context, _ any, instance types.Workflow
 	k := key(instance.AggregateType, instance.AggregateID)
 	existing, ok := s.instances[k]
 	if !ok {
-		return flowstate.ErrInstanceNotFound
+		return flowstep.ErrInstanceNotFound
 	}
 
 	// Skip locking for zero LastReadUpdatedAt (new instances not yet re-read).
 	if !instance.LastReadUpdatedAt.IsZero() && !existing.UpdatedAt.Equal(instance.LastReadUpdatedAt) {
-		return flowstate.ErrConcurrentModification
+		return flowstep.ErrConcurrentModification
 	}
 
 	s.instances[k] = instance

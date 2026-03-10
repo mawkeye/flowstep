@@ -6,11 +6,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mawkeye/flowstate/types"
+	"github.com/mawkeye/flowstep/types"
 )
 
 
-// ChildStore is an in-memory implementation of flowstate.ChildStore.
+// ChildStore is an in-memory implementation of flowstep.ChildStore.
 type ChildStore struct {
 	mu       sync.RWMutex
 	children []types.ChildRelation
@@ -37,7 +37,7 @@ func (s *ChildStore) GetByChild(_ context.Context, childAggregateType, childAggr
 			return &copy, nil
 		}
 	}
-	return nil, fmt.Errorf("flowstate: child relation not found")
+	return nil, fmt.Errorf("flowstep: child relation not found")
 }
 
 func (s *ChildStore) GetByParent(_ context.Context, parentAggregateType, parentAggregateID string) ([]types.ChildRelation, error) {
@@ -79,5 +79,5 @@ func (s *ChildStore) Complete(_ context.Context, _ any, childAggregateType, chil
 			return nil
 		}
 	}
-	return fmt.Errorf("flowstate: child relation not found")
+	return fmt.Errorf("flowstep: child relation not found")
 }

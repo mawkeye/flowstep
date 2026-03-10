@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/mawkeye/flowstate/types"
+	"github.com/mawkeye/flowstep/types"
 )
 
 // ValidationError wraps a sentinel error with additional context.
@@ -69,13 +69,13 @@ func checkInitialState(def *types.Definition, s Sentinels) error {
 	if initialCount == 0 {
 		return &ValidationError{
 			Sentinel: s.ErrNoInitialState,
-			Detail:   "flowstate: no initial state defined",
+			Detail:   "flowstep: no initial state defined",
 		}
 	}
 	if initialCount > 1 {
 		return &ValidationError{
 			Sentinel: s.ErrMultipleInitialStates,
-			Detail:   "flowstate: multiple initial states defined",
+			Detail:   "flowstep: multiple initial states defined",
 		}
 	}
 	return nil
@@ -89,7 +89,7 @@ func checkTerminalStates(def *types.Definition, s Sentinels) error {
 	}
 	return &ValidationError{
 		Sentinel: s.ErrNoTerminalStates,
-		Detail:   "flowstate: no terminal states defined",
+		Detail:   "flowstep: no terminal states defined",
 	}
 }
 
@@ -99,7 +99,7 @@ func checkUnknownStates(def *types.Definition, s Sentinels) error {
 			if _, ok := def.States[src]; !ok {
 				return &ValidationError{
 					Sentinel: s.ErrUnknownState,
-					Detail:   fmt.Sprintf("flowstate: transition %q references unknown source state %q", name, src),
+					Detail:   fmt.Sprintf("flowstep: transition %q references unknown source state %q", name, src),
 				}
 			}
 		}
@@ -107,7 +107,7 @@ func checkUnknownStates(def *types.Definition, s Sentinels) error {
 			if _, ok := def.States[tr.Target]; !ok {
 				return &ValidationError{
 					Sentinel: s.ErrUnknownState,
-					Detail:   fmt.Sprintf("flowstate: transition %q references unknown target state %q", name, tr.Target),
+					Detail:   fmt.Sprintf("flowstep: transition %q references unknown target state %q", name, tr.Target),
 				}
 			}
 		}
@@ -118,7 +118,7 @@ func checkUnknownStates(def *types.Definition, s Sentinels) error {
 			if _, ok := def.States[route.Target]; !ok {
 				return &ValidationError{
 					Sentinel: s.ErrUnknownState,
-					Detail:   fmt.Sprintf("flowstate: transition %q route references unknown target state %q", name, route.Target),
+					Detail:   fmt.Sprintf("flowstep: transition %q route references unknown target state %q", name, route.Target),
 				}
 			}
 		}
@@ -163,7 +163,7 @@ func checkReachability(def *types.Definition, s Sentinels) error {
 		if !reachable[name] {
 			return &ValidationError{
 				Sentinel: s.ErrUnreachableState,
-				Detail:   fmt.Sprintf("flowstate: state %q is unreachable from initial state", name),
+				Detail:   fmt.Sprintf("flowstep: state %q is unreachable from initial state", name),
 			}
 		}
 	}
@@ -186,7 +186,7 @@ func checkDeadEnds(def *types.Definition, s Sentinels) error {
 		if !hasOutgoing {
 			return &ValidationError{
 				Sentinel: s.ErrDeadEndState,
-				Detail:   fmt.Sprintf("flowstate: non-terminal state %q has no outgoing transitions", name),
+				Detail:   fmt.Sprintf("flowstep: non-terminal state %q has no outgoing transitions", name),
 			}
 		}
 	}

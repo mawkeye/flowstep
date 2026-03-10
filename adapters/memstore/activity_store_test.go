@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mawkeye/flowstate/types"
+	"github.com/mawkeye/flowstep/types"
 )
 
 func newInvocation(id, aggType, aggID string, status string) types.ActivityInvocation {

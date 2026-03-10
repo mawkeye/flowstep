@@ -1,7 +1,7 @@
--- flowstate schema for SQLite
--- Apply with: sqlite3 flowstate.db < 001_flowstate.sql
+-- flowstep schema for SQLite
+-- Apply with: sqlite3 flowstep.db < 001_flowstep.sql
 
-CREATE TABLE IF NOT EXISTS flowstate_events (
+CREATE TABLE IF NOT EXISTS flowstep_events (
     id              TEXT PRIMARY KEY,
     aggregate_type  TEXT NOT NULL,
     aggregate_id    TEXT NOT NULL,
@@ -19,11 +19,11 @@ CREATE TABLE IF NOT EXISTS flowstate_events (
 );
 
 CREATE INDEX IF NOT EXISTS idx_events_aggregate
-    ON flowstate_events (aggregate_type, aggregate_id, created_at);
+    ON flowstep_events (aggregate_type, aggregate_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_events_correlation
-    ON flowstate_events (correlation_id, created_at);
+    ON flowstep_events (correlation_id, created_at);
 
-CREATE TABLE IF NOT EXISTS flowstate_instances (
+CREATE TABLE IF NOT EXISTS flowstep_instances (
     id              TEXT PRIMARY KEY,
     workflow_type   TEXT NOT NULL,
     workflow_version INTEGER NOT NULL DEFAULT 1,
@@ -39,7 +39,7 @@ CREATE TABLE IF NOT EXISTS flowstate_instances (
     updated_at      TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS flowstate_tasks (
+CREATE TABLE IF NOT EXISTS flowstep_tasks (
     id              TEXT PRIMARY KEY,
     workflow_type   TEXT NOT NULL,
     aggregate_type  TEXT NOT NULL,
@@ -57,7 +57,7 @@ CREATE TABLE IF NOT EXISTS flowstate_tasks (
     completed_at    TEXT
 );
 
-CREATE TABLE IF NOT EXISTS flowstate_children (
+CREATE TABLE IF NOT EXISTS flowstep_children (
     id                      TEXT PRIMARY KEY,
     group_id                TEXT,
     parent_workflow_type    TEXT NOT NULL,
@@ -75,11 +75,11 @@ CREATE TABLE IF NOT EXISTS flowstate_children (
 );
 
 CREATE INDEX IF NOT EXISTS idx_children_child
-    ON flowstate_children (child_aggregate_type, child_aggregate_id);
+    ON flowstep_children (child_aggregate_type, child_aggregate_id);
 CREATE INDEX IF NOT EXISTS idx_children_parent
-    ON flowstate_children (parent_aggregate_type, parent_aggregate_id);
+    ON flowstep_children (parent_aggregate_type, parent_aggregate_id);
 
-CREATE TABLE IF NOT EXISTS flowstate_activities (
+CREATE TABLE IF NOT EXISTS flowstep_activities (
     id              TEXT PRIMARY KEY,
     activity_name   TEXT NOT NULL,
     workflow_type   TEXT NOT NULL,

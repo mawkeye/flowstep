@@ -1,6 +1,6 @@
-package flowstate
+package flowstep
 
-import "github.com/mawkeye/flowstate/types"
+import "github.com/mawkeye/flowstep/types"
 
 // EventStore persists and queries immutable domain events.
 type EventStore = types.EventStore

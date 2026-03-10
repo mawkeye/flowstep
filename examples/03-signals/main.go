@@ -17,9 +17,9 @@ import (
 	"log"
 	"os"
 
-	"github.com/mawkeye/flowstate"
-	"github.com/mawkeye/flowstate/adapters/memstore"
-	"github.com/mawkeye/flowstate/types"
+	"github.com/mawkeye/flowstep"
+	"github.com/mawkeye/flowstep/adapters/memstore"
+	"github.com/mawkeye/flowstep/types"
 )
 
 func main() {
@@ -30,30 +30,30 @@ func main() {
 	// The AWAITING_PAYMENT state has two signal-triggered transitions:
 	//   "payment_succeeded" signal → CONFIRMED
 	//   "payment_failed"    signal → CANCELLED
-	def, err := flowstate.Define("booking", "booking_workflow").
+	def, err := flowstep.Define("booking", "booking_workflow").
 		Version(1).
 		States(
-			flowstate.Initial("CREATED"),
-			flowstate.State("AWAITING_PAYMENT"),
-			flowstate.Terminal("CONFIRMED"),
-			flowstate.Terminal("CANCELLED"),
+			flowstep.Initial("CREATED"),
+			flowstep.State("AWAITING_PAYMENT"),
+			flowstep.Terminal("CONFIRMED"),
+			flowstep.Terminal("CANCELLED"),
 		).
 		Transition("initiate_payment",
-			flowstate.From("CREATED"),
-			flowstate.To("AWAITING_PAYMENT"),
-			flowstate.Event("PaymentInitiated"),
+			flowstep.From("CREATED"),
+			flowstep.To("AWAITING_PAYMENT"),
+			flowstep.Event("PaymentInitiated"),
 		).
 		Transition("payment_ok",
-			flowstate.From("AWAITING_PAYMENT"),
-			flowstate.To("CONFIRMED"),
-			flowstate.OnSignal("payment_succeeded"),
-			flowstate.Event("BookingConfirmed"),
+			flowstep.From("AWAITING_PAYMENT"),
+			flowstep.To("CONFIRMED"),
+			flowstep.OnSignal("payment_succeeded"),
+			flowstep.Event("BookingConfirmed"),
 		).
 		Transition("payment_fail",
-			flowstate.From("AWAITING_PAYMENT"),
-			flowstate.To("CANCELLED"),
-			flowstate.OnSignal("payment_failed"),
-			flowstate.Event("BookingCancelled"),
+			flowstep.From("AWAITING_PAYMENT"),
+			flowstep.To("CANCELLED"),
+			flowstep.OnSignal("payment_failed"),
+			flowstep.Event("BookingCancelled"),
 		).
 		Build()
 	if err != nil {
@@ -67,10 +67,10 @@ func main() {
 	}
 	fmt.Println("Wrote Mermaid diagram to examples/03-signals/workflow.md")
 
-	engine, err := flowstate.NewEngine(
-		flowstate.WithEventStore(memstore.NewEventStore()),
-		flowstate.WithInstanceStore(memstore.NewInstanceStore()),
-		flowstate.WithTxProvider(memstore.NewTxProvider()),
+	engine, err := flowstep.NewEngine(
+		flowstep.WithEventStore(memstore.NewEventStore()),
+		flowstep.WithInstanceStore(memstore.NewInstanceStore()),
+		flowstep.WithTxProvider(memstore.NewTxProvider()),
 	)
 	if err != nil {
 		log.Fatalf("create engine: %v", err)

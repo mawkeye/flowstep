@@ -1,9 +1,9 @@
-package flowstate
+package flowstep
 
 import (
-	"github.com/mawkeye/flowstate/internal/builder"
-	"github.com/mawkeye/flowstate/internal/graph"
-	"github.com/mawkeye/flowstate/types"
+	"github.com/mawkeye/flowstep/internal/builder"
+	"github.com/mawkeye/flowstep/internal/graph"
+	"github.com/mawkeye/flowstep/types"
 )
 
 // Re-export builder option types for the public API.

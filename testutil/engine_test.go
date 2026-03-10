@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mawkeye/flowstate/testutil"
+	"github.com/mawkeye/flowstep/testutil"
 )
 
 func TestNewTestEngine(t *testing.T) {

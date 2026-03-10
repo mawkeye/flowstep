@@ -1,27 +1,27 @@
-package flowstate_test
+package flowstep_test
 
 import (
 	"context"
 	"fmt"
 	"log"
 
-	"github.com/mawkeye/flowstate"
-	"github.com/mawkeye/flowstate/adapters/memstore"
+	"github.com/mawkeye/flowstep"
+	"github.com/mawkeye/flowstep/adapters/memstore"
 )
 
 // Example demonstrates how to define a simple workflow and execute a transition.
 func Example() {
 	// 1. Define the workflow
-	def, err := flowstate.Define("order", "simple_order").
+	def, err := flowstep.Define("order", "simple_order").
 		Version(1).
 		States(
-			flowstate.Initial("CREATED"),
-			flowstate.Terminal("DONE"),
+			flowstep.Initial("CREATED"),
+			flowstep.Terminal("DONE"),
 		).
 		Transition("complete",
-			flowstate.From("CREATED"),
-			flowstate.To("DONE"),
-			flowstate.Event("OrderCompleted"),
+			flowstep.From("CREATED"),
+			flowstep.To("DONE"),
+			flowstep.Event("OrderCompleted"),
 		).
 		Build()
 	if err != nil {
@@ -29,10 +29,10 @@ func Example() {
 	}
 
 	// 2. Initialize the engine with in-memory adapters
-	engine, err := flowstate.NewEngine(
-		flowstate.WithEventStore(memstore.NewEventStore()),
-		flowstate.WithInstanceStore(memstore.NewInstanceStore()),
-		flowstate.WithTxProvider(memstore.NewTxProvider()),
+	engine, err := flowstep.NewEngine(
+		flowstep.WithEventStore(memstore.NewEventStore()),
+		flowstep.WithInstanceStore(memstore.NewInstanceStore()),
+		flowstep.WithTxProvider(memstore.NewTxProvider()),
 	)
 	if err != nil {
 		log.Fatal(err)

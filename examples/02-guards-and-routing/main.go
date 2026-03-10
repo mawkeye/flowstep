@@ -16,9 +16,9 @@ import (
 	"log"
 	"os"
 
-	"github.com/mawkeye/flowstate"
-	"github.com/mawkeye/flowstate/adapters/memstore"
-	"github.com/mawkeye/flowstate/types"
+	"github.com/mawkeye/flowstep"
+	"github.com/mawkeye/flowstep/adapters/memstore"
+	"github.com/mawkeye/flowstep/types"
 )
 
 // minimumAmountGuard blocks the transition if the amount param is below the minimum.
@@ -59,27 +59,27 @@ func main() {
 	//   - Default (all other cases): AUTO_APPROVED
 	//
 	// An additional guard blocks the transition if amount < 1.00.
-	def, err := flowstate.Define("loan", "loan_workflow").
+	def, err := flowstep.Define("loan", "loan_workflow").
 		Version(1).
 		States(
-			flowstate.Initial("SUBMITTED"),
-			flowstate.Terminal("MANUAL_REVIEW"),
-			flowstate.Terminal("AUTO_APPROVED"),
+			flowstep.Initial("SUBMITTED"),
+			flowstep.Terminal("MANUAL_REVIEW"),
+			flowstep.Terminal("AUTO_APPROVED"),
 		).
 		Transition("evaluate",
-			flowstate.From("SUBMITTED"),
+			flowstep.From("SUBMITTED"),
 			// Guard runs first — blocks transition if amount < 1.00
-			flowstate.Guards(&minimumAmountGuard{minimum: 1.00}),
+			flowstep.Guards(&minimumAmountGuard{minimum: 1.00}),
 			// Routes: first matching condition wins; Default is required
-			flowstate.Route(
-				flowstate.When(&highValueCondition{threshold: 10_000}),
-				flowstate.To("MANUAL_REVIEW"),
+			flowstep.Route(
+				flowstep.When(&highValueCondition{threshold: 10_000}),
+				flowstep.To("MANUAL_REVIEW"),
 			),
-			flowstate.Route(
-				flowstate.Default(),
-				flowstate.To("AUTO_APPROVED"),
+			flowstep.Route(
+				flowstep.Default(),
+				flowstep.To("AUTO_APPROVED"),
 			),
-			flowstate.Event("LoanEvaluated"),
+			flowstep.Event("LoanEvaluated"),
 		).
 		Build()
 	if err != nil {
@@ -93,10 +93,10 @@ func main() {
 	}
 	fmt.Println("Wrote Mermaid diagram to examples/02-guards-and-routing/workflow.md")
 
-	engine, err := flowstate.NewEngine(
-		flowstate.WithEventStore(memstore.NewEventStore()),
-		flowstate.WithInstanceStore(memstore.NewInstanceStore()),
-		flowstate.WithTxProvider(memstore.NewTxProvider()),
+	engine, err := flowstep.NewEngine(
+		flowstep.WithEventStore(memstore.NewEventStore()),
+		flowstep.WithInstanceStore(memstore.NewInstanceStore()),
+		flowstep.WithTxProvider(memstore.NewTxProvider()),
 	)
 	if err != nil {
 		log.Fatalf("create engine: %v", err)
@@ -114,7 +114,7 @@ func main() {
 	_, err = engine.Transition(ctx, "loan", "loan-1", "evaluate", "system",
 		map[string]any{"amount": 0.50},
 	)
-	if errors.Is(err, flowstate.ErrGuardFailed) {
+	if errors.Is(err, flowstep.ErrGuardFailed) {
 		fmt.Printf("Guard blocked transition: %v\n", err)
 		// Guard failure details are reported via the Hooks.OnGuardFailed callback.
 	} else {

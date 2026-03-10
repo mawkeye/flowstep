@@ -6,10 +6,10 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/mawkeye/flowstate/types"
+	"github.com/mawkeye/flowstep/types"
 )
 
-// EventStore implements flowstate.EventStore using PostgreSQL.
+// EventStore implements flowstep.EventStore using PostgreSQL.
 type EventStore struct {
 	pool *pgxpool.Pool
 }
@@ -30,7 +30,7 @@ func (s *EventStore) Append(ctx context.Context, tx any, event types.DomainEvent
 	payload, _ := json.Marshal(event.Payload)
 
 	_, err = pgxTx.Exec(ctx, `
-		INSERT INTO flowstate_events
+		INSERT INTO flowstep_events
 			(id, aggregate_type, aggregate_id, workflow_type, workflow_version,
 			 event_type, correlation_id, causation_id, actor_id, transition_name,
 			 state_before, state_after, payload, created_at)
@@ -52,7 +52,7 @@ func (s *EventStore) ListByCorrelation(ctx context.Context, correlationID string
 		SELECT id, aggregate_type, aggregate_id, workflow_type, workflow_version,
 		       event_type, correlation_id, causation_id, actor_id, transition_name,
 		       state_before, state_after, payload, created_at
-		FROM flowstate_events
+		FROM flowstep_events
 		WHERE correlation_id = $1
 		ORDER BY created_at`, correlationID)
 	if err != nil {
@@ -68,7 +68,7 @@ func (s *EventStore) ListByAggregate(ctx context.Context, aggregateType, aggrega
 		SELECT id, aggregate_type, aggregate_id, workflow_type, workflow_version,
 		       event_type, correlation_id, causation_id, actor_id, transition_name,
 		       state_before, state_after, payload, created_at
-		FROM flowstate_events
+		FROM flowstep_events
 		WHERE aggregate_type = $1 AND aggregate_id = $2
 		ORDER BY created_at`, aggregateType, aggregateID)
 	if err != nil {

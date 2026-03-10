@@ -1,10 +1,10 @@
-package flowstate
+package flowstep
 
 import (
 	"context"
 	"time"
 
-	"github.com/mawkeye/flowstate/types"
+	"github.com/mawkeye/flowstep/types"
 )
 
 // Hooks allows consumers to observe engine behavior.

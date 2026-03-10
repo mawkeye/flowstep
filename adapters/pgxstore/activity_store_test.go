@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/mawkeye/flowstate"
-	"github.com/mawkeye/flowstate/adapters/pgxstore"
-	"github.com/mawkeye/flowstate/types"
+	"github.com/mawkeye/flowstep"
+	"github.com/mawkeye/flowstep/adapters/pgxstore"
+	"github.com/mawkeye/flowstep/types"
 )
 
 func TestActivityStore_ListMethods(t *testing.T) {
@@ -27,11 +27,11 @@ func TestActivityStore_ListMethods(t *testing.T) {
 	defer pool.Close()
 
 	// Clean up
-	if _, err := pool.Exec(ctx, "TRUNCATE flowstate_activities"); err != nil {
+	if _, err := pool.Exec(ctx, "TRUNCATE flowstep_activities"); err != nil {
 		t.Fatalf("failed to truncate activities: %v", err)
 	}
 
-	store := pgxstore.NewActivityStore(pool, flowstate.ErrActivityNotFound)
+	store := pgxstore.NewActivityStore(pool, flowstep.ErrActivityNotFound)
 	now := time.Now().UTC()
 
 	// 1. Pending (freshly scheduled, no retry time set)
@@ -79,7 +79,7 @@ func TestActivityStore_ListMethods(t *testing.T) {
 		t.Fatalf("failed to create act3: %v", err)
 	}
 	// Manually set next_retry_at since Create doesn't support it
-	if _, err := pool.Exec(ctx, "UPDATE flowstate_activities SET next_retry_at = $1 WHERE id = $2", now.Add(-time.Hour), "act3"); err != nil {
+	if _, err := pool.Exec(ctx, "UPDATE flowstep_activities SET next_retry_at = $1 WHERE id = $2", now.Add(-time.Hour), "act3"); err != nil {
 		t.Fatalf("failed to update act3: %v", err)
 	}
 
@@ -97,7 +97,7 @@ func TestActivityStore_ListMethods(t *testing.T) {
 	if err := store.Create(ctx, nil, act4); err != nil {
 		t.Fatalf("failed to create act4: %v", err)
 	}
-	if _, err := pool.Exec(ctx, "UPDATE flowstate_activities SET next_retry_at = $1 WHERE id = $2", now.Add(time.Hour), "act4"); err != nil {
+	if _, err := pool.Exec(ctx, "UPDATE flowstep_activities SET next_retry_at = $1 WHERE id = $2", now.Add(time.Hour), "act4"); err != nil {
 		t.Fatalf("failed to update act4: %v", err)
 	}
 
@@ -154,7 +154,7 @@ func TestActivityStore_Lifecycle(t *testing.T) {
 	}
 	defer pool.Close()
 
-	store := pgxstore.NewActivityStore(pool, flowstate.ErrActivityNotFound)
+	store := pgxstore.NewActivityStore(pool, flowstep.ErrActivityNotFound)
 	inv := types.ActivityInvocation{
 		ID:            "lifecycle_act",
 		ActivityName:  "act",
@@ -190,7 +190,7 @@ func TestActivityStore_Lifecycle(t *testing.T) {
 
 	// Get with non-existent ID must return ErrActivityNotFound sentinel
 	_, notFoundErr := store.Get(ctx, "non-existent-activity-id")
-	if !errors.Is(notFoundErr, flowstate.ErrActivityNotFound) {
+	if !errors.Is(notFoundErr, flowstep.ErrActivityNotFound) {
 		t.Errorf("expected ErrActivityNotFound for missing activity, got %v", notFoundErr)
 	}
 }

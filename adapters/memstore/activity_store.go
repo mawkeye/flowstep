@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/mawkeye/flowstate/types"
+	"github.com/mawkeye/flowstep/types"
 )
 
-// ActivityStore is an in-memory implementation of flowstate.ActivityStore.
+// ActivityStore is an in-memory implementation of flowstep.ActivityStore.
 type ActivityStore struct {
 	mu          sync.RWMutex
 	invocations map[string]types.ActivityInvocation // key: invocation ID
@@ -33,7 +33,7 @@ func (s *ActivityStore) Get(_ context.Context, invocationID string) (*types.Acti
 	defer s.mu.RUnlock()
 	inv, ok := s.invocations[invocationID]
 	if !ok {
-		return nil, fmt.Errorf("flowstate: activity invocation not found")
+		return nil, fmt.Errorf("flowstep: activity invocation not found")
 	}
 	copy := inv
 	return &copy, nil
@@ -44,7 +44,7 @@ func (s *ActivityStore) UpdateStatus(_ context.Context, invocationID, status str
 	defer s.mu.Unlock()
 	inv, ok := s.invocations[invocationID]
 	if !ok {
-		return fmt.Errorf("flowstate: activity invocation not found")
+		return fmt.Errorf("flowstep: activity invocation not found")
 	}
 	inv.Status = status
 	inv.Result = result

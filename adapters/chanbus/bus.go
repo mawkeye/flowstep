@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/mawkeye/flowstate/types"
+	"github.com/mawkeye/flowstep/types"
 )
 
 // Handler is a function that receives domain events.

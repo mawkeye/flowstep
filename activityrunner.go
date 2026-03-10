@@ -1,10 +1,10 @@
-package flowstate
+package flowstep
 
-import "github.com/mawkeye/flowstate/types"
+import "github.com/mawkeye/flowstep/types"
 
 // Activity performs non-deterministic work outside the workflow transaction.
 // Can contain any code: API calls, DB writes, file I/O, network requests.
-// flowstate does NOT recover or replay activity state on failure.
+// flowstep does NOT recover or replay activity state on failure.
 type Activity = types.Activity
 
 // ActivityRunner dispatches activity invocations for async execution.

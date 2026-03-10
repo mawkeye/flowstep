@@ -1,4 +1,4 @@
-// Package dynamostore provides a DynamoDB implementation of flowstate store interfaces
+// Package dynamostore provides a DynamoDB implementation of flowstep store interfaces
 // using a single-table design with PK/SK patterns.
 //
 // Table design:
@@ -27,11 +27,11 @@ import (
 	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	ddbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
-	"github.com/mawkeye/flowstate"
-	"github.com/mawkeye/flowstate/types"
+	"github.com/mawkeye/flowstep"
+	"github.com/mawkeye/flowstep/types"
 )
 
-// Store implements flowstate EventStore, InstanceStore, TaskStore,
+// Store implements flowstep EventStore, InstanceStore, TaskStore,
 // ChildStore, and ActivityStore using a single DynamoDB table.
 type Store struct {
 	client    *dynamodb.Client
@@ -48,7 +48,7 @@ func New(client *dynamodb.Client, tableName string, errNotFound error) *Store {
 	}
 }
 
-// TxProvider implements flowstate.TxProvider using DynamoDB TransactWriteItems.
+// TxProvider implements flowstep.TxProvider using DynamoDB TransactWriteItems.
 // Since DynamoDB transactions work differently, this collects items and writes them atomically on Commit.
 type TxProvider struct {
 	client    *dynamodb.Client
@@ -85,7 +85,7 @@ func (p *TxProvider) Commit(ctx context.Context, tx any) error {
 		if errors.As(err, &txCanceled) {
 			for _, reason := range txCanceled.CancellationReasons {
 				if reason.Code != nil && *reason.Code == "ConditionalCheckFailed" {
-					return fmt.Errorf("dynamostore: commit tx: %w", flowstate.ErrConcurrentModification)
+					return fmt.Errorf("dynamostore: commit tx: %w", flowstep.ErrConcurrentModification)
 				}
 			}
 		}
@@ -298,7 +298,7 @@ func (s *Store) Update(ctx context.Context, tx any, instance types.WorkflowInsta
 	if putErr != nil {
 		var condFailed *ddbtypes.ConditionalCheckFailedException
 		if errors.As(putErr, &condFailed) {
-			return fmt.Errorf("dynamostore: update instance: %w", flowstate.ErrConcurrentModification)
+			return fmt.Errorf("dynamostore: update instance: %w", flowstep.ErrConcurrentModification)
 		}
 		return fmt.Errorf("dynamostore: update instance: %w", putErr)
 	}

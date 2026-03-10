@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mawkeye/flowstate/types"
+	"github.com/mawkeye/flowstep/types"
 )
 
 func TestEventStoreAppendAndList(t *testing.T) {

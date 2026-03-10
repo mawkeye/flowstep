@@ -1,4 +1,4 @@
-// Package sqlitestore provides a SQLite implementation of flowstate store interfaces
+// Package sqlitestore provides a SQLite implementation of flowstep store interfaces
 // using database/sql. Users must import a SQLite driver (e.g., modernc.org/sqlite
 // or github.com/mattn/go-sqlite3).
 package sqlitestore
@@ -11,16 +11,16 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/mawkeye/flowstate"
-	"github.com/mawkeye/flowstate/types"
+	"github.com/mawkeye/flowstep"
+	"github.com/mawkeye/flowstep/types"
 )
 
-// Migrations contains the SQL migration files for flowstate.
+// Migrations contains the SQL migration files for flowstep.
 //
 //go:embed migrations/*.sql
 var Migrations embed.FS
 
-// TxProvider implements flowstate.TxProvider using database/sql transactions.
+// TxProvider implements flowstep.TxProvider using database/sql transactions.
 type TxProvider struct {
 	db *sql.DB
 }
@@ -46,7 +46,7 @@ func (p *TxProvider) Rollback(_ context.Context, tx any) error {
 	return tx.(*sql.Tx).Rollback()
 }
 
-// EventStore implements flowstate.EventStore using SQLite.
+// EventStore implements flowstep.EventStore using SQLite.
 type EventStore struct {
 	db *sql.DB
 }
@@ -63,7 +63,7 @@ func (s *EventStore) Append(ctx context.Context, tx any, event types.DomainEvent
 	payload, _ := json.Marshal(event.Payload)
 
 	_, err := sqlTx.ExecContext(ctx, `
-		INSERT INTO flowstate_events
+		INSERT INTO flowstep_events
 			(id, aggregate_type, aggregate_id, workflow_type, workflow_version,
 			 event_type, correlation_id, causation_id, actor_id, transition_name,
 			 state_before, state_after, payload, created_at)
@@ -86,7 +86,7 @@ func (s *EventStore) ListByCorrelation(ctx context.Context, correlationID string
 		SELECT id, aggregate_type, aggregate_id, workflow_type, workflow_version,
 		       event_type, correlation_id, causation_id, actor_id, transition_name,
 		       state_before, state_after, payload, created_at
-		FROM flowstate_events WHERE correlation_id = ? ORDER BY created_at`, correlationID)
+		FROM flowstep_events WHERE correlation_id = ? ORDER BY created_at`, correlationID)
 	if err != nil {
 		return nil, fmt.Errorf("sqlitestore: query events: %w", err)
 	}
@@ -99,7 +99,7 @@ func (s *EventStore) ListByAggregate(ctx context.Context, aggregateType, aggrega
 		SELECT id, aggregate_type, aggregate_id, workflow_type, workflow_version,
 		       event_type, correlation_id, causation_id, actor_id, transition_name,
 		       state_before, state_after, payload, created_at
-		FROM flowstate_events WHERE aggregate_type = ? AND aggregate_id = ? ORDER BY created_at`,
+		FROM flowstep_events WHERE aggregate_type = ? AND aggregate_id = ? ORDER BY created_at`,
 		aggregateType, aggregateID)
 	if err != nil {
 		return nil, fmt.Errorf("sqlitestore: query events: %w", err)
@@ -132,7 +132,7 @@ func scanEvents(rows *sql.Rows) ([]types.DomainEvent, error) {
 	return events, rows.Err()
 }
 
-// InstanceStore implements flowstate.InstanceStore using SQLite.
+// InstanceStore implements flowstep.InstanceStore using SQLite.
 type InstanceStore struct {
 	db          *sql.DB
 	errNotFound error
@@ -152,7 +152,7 @@ func (s *InstanceStore) Get(ctx context.Context, aggregateType, aggregateID stri
 		SELECT id, workflow_type, workflow_version, aggregate_type, aggregate_id,
 		       current_state, state_data, correlation_id, is_stuck, stuck_reason,
 		       retry_count, created_at, updated_at
-		FROM flowstate_instances WHERE aggregate_type = ? AND aggregate_id = ?`,
+		FROM flowstep_instances WHERE aggregate_type = ? AND aggregate_id = ?`,
 		aggregateType, aggregateID,
 	).Scan(
 		&inst.ID, &inst.WorkflowType, &inst.WorkflowVersion,
@@ -183,7 +183,7 @@ func (s *InstanceStore) Create(ctx context.Context, tx any, instance types.Workf
 	}
 
 	_, err := sqlTx.ExecContext(ctx, `
-		INSERT INTO flowstate_instances
+		INSERT INTO flowstep_instances
 			(id, workflow_type, workflow_version, aggregate_type, aggregate_id,
 			 current_state, state_data, correlation_id, is_stuck, stuck_reason,
 			 retry_count, created_at, updated_at)
@@ -210,7 +210,7 @@ func (s *InstanceStore) Update(ctx context.Context, tx any, instance types.Workf
 	}
 
 	result, err := sqlTx.ExecContext(ctx, `
-		UPDATE flowstate_instances
+		UPDATE flowstep_instances
 		SET current_state = ?, state_data = ?, is_stuck = ?, stuck_reason = ?,
 		    retry_count = ?, updated_at = ?
 		WHERE aggregate_type = ? AND aggregate_id = ? AND updated_at = ?`,
@@ -223,7 +223,7 @@ func (s *InstanceStore) Update(ctx context.Context, tx any, instance types.Workf
 		return fmt.Errorf("sqlitestore: update instance: %w", err)
 	}
 	if n, _ := result.RowsAffected(); n == 0 {
-		return fmt.Errorf("sqlitestore: update instance: %w", flowstate.ErrConcurrentModification)
+		return fmt.Errorf("sqlitestore: update instance: %w", flowstep.ErrConcurrentModification)
 	}
 	return nil
 }
@@ -233,7 +233,7 @@ func (s *InstanceStore) ListStuck(ctx context.Context) ([]types.WorkflowInstance
 		SELECT id, workflow_type, workflow_version, aggregate_type, aggregate_id,
 		       current_state, state_data, correlation_id, is_stuck, stuck_reason,
 		       retry_count, created_at, updated_at
-		FROM flowstate_instances WHERE is_stuck = 1 ORDER BY updated_at`)
+		FROM flowstep_instances WHERE is_stuck = 1 ORDER BY updated_at`)
 	if err != nil {
 		return nil, fmt.Errorf("sqlitestore: query stuck: %w", err)
 	}

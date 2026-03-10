@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/mawkeye/flowstate/adapters/pgxstore"
-	"github.com/mawkeye/flowstate/types"
+	"github.com/mawkeye/flowstep/adapters/pgxstore"
+	"github.com/mawkeye/flowstep/types"
 )
 
 func TestEventStore(t *testing.T) {
@@ -24,7 +24,7 @@ func TestEventStore(t *testing.T) {
 	}
 	defer pool.Close()
 
-	if _, err := pool.Exec(ctx, "TRUNCATE flowstate_events"); err != nil {
+	if _, err := pool.Exec(ctx, "TRUNCATE flowstep_events"); err != nil {
 		t.Fatalf("failed to truncate events: %v", err)
 	}
 

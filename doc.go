@@ -1,4 +1,4 @@
-// Package flowstate provides a declarative workflow engine for Go.
+// Package flowstep provides a declarative workflow engine for Go.
 //
 // Workflows are defined as state machines using a fluent builder API.
 // The engine handles state transitions, guard evaluation, activity dispatch,
@@ -17,22 +17,22 @@
 //
 // Example:
 //
-//	def, _ := flowstate.Define("order", "standard_order").
+//	def, _ := flowstep.Define("order", "standard_order").
 //	    Version(1).
 //	    States(
-//	        flowstate.Initial("CREATED"),
-//	        flowstate.State("PAID"),
-//	        flowstate.Terminal("SHIPPED"),
+//	        flowstep.Initial("CREATED"),
+//	        flowstep.State("PAID"),
+//	        flowstep.Terminal("SHIPPED"),
 //	    ).
 //	    Transition("pay",
-//	        flowstate.From("CREATED"),
-//	        flowstate.To("PAID"),
-//	        flowstate.Event("OrderPaid"),
+//	        flowstep.From("CREATED"),
+//	        flowstep.To("PAID"),
+//	        flowstep.Event("OrderPaid"),
 //	    ).
 //	    Transition("ship",
-//	        flowstate.From("PAID"),
-//	        flowstate.To("SHIPPED"),
-//	        flowstate.Event("OrderShipped"),
+//	        flowstep.From("PAID"),
+//	        flowstep.To("SHIPPED"),
+//	        flowstep.Event("OrderShipped"),
 //	    ).
 //	    Build()
-package flowstate
+package flowstep

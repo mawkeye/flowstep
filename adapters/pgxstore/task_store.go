@@ -9,10 +9,10 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/mawkeye/flowstate/types"
+	"github.com/mawkeye/flowstep/types"
 )
 
-// TaskStore implements flowstate.TaskStore using PostgreSQL.
+// TaskStore implements flowstep.TaskStore using PostgreSQL.
 type TaskStore struct {
 	pool        *pgxpool.Pool
 	errNotFound error
@@ -53,7 +53,7 @@ func (s *TaskStore) Create(ctx context.Context, tx any, task types.PendingTask) 
 }
 
 func (s *TaskStore) insertSQL() string {
-	return `INSERT INTO flowstate_tasks
+	return `INSERT INTO flowstep_tasks
 		(id, workflow_type, aggregate_type, aggregate_id, correlation_id,
 		 task_type, description, options, status, timeout, expires_at, created_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`
@@ -69,7 +69,7 @@ func (s *TaskStore) Get(ctx context.Context, taskID string) (*types.PendingTask,
 		SELECT id, workflow_type, aggregate_type, aggregate_id, correlation_id,
 		       task_type, description, options, status, choice, completed_by,
 		       timeout, expires_at, created_at
-		FROM flowstate_tasks WHERE id = $1`, taskID,
+		FROM flowstep_tasks WHERE id = $1`, taskID,
 	).Scan(
 		&task.ID, &task.WorkflowType, &task.AggregateType, &task.AggregateID,
 		&task.CorrelationID, &task.TaskType, &task.Description,
@@ -95,7 +95,7 @@ func (s *TaskStore) GetByAggregate(ctx context.Context, aggregateType, aggregate
 		SELECT id, workflow_type, aggregate_type, aggregate_id, correlation_id,
 		       task_type, description, options, status, choice, completed_by,
 		       timeout, expires_at, created_at
-		FROM flowstate_tasks
+		FROM flowstep_tasks
 		WHERE aggregate_type = $1 AND aggregate_id = $2
 		ORDER BY created_at`, aggregateType, aggregateID)
 	if err != nil {
@@ -111,7 +111,7 @@ func (s *TaskStore) ListPending(ctx context.Context) ([]types.PendingTask, error
 		SELECT id, workflow_type, aggregate_type, aggregate_id, correlation_id,
 		       task_type, description, options, status, choice, completed_by,
 		       timeout, expires_at, created_at
-		FROM flowstate_tasks
+		FROM flowstep_tasks
 		WHERE status = 'PENDING'
 		ORDER BY created_at`)
 	if err != nil {
@@ -127,7 +127,7 @@ func (s *TaskStore) ListExpired(ctx context.Context) ([]types.PendingTask, error
 		SELECT id, workflow_type, aggregate_type, aggregate_id, correlation_id,
 		       task_type, description, options, status, choice, completed_by,
 		       timeout, expires_at, created_at
-		FROM flowstate_tasks
+		FROM flowstep_tasks
 		WHERE status = 'PENDING' AND expires_at < NOW()
 		ORDER BY created_at`)
 	if err != nil {
@@ -165,7 +165,7 @@ func (s *TaskStore) scanTasks(rows pgx.Rows) ([]types.PendingTask, error) {
 }
 
 func (s *TaskStore) Complete(ctx context.Context, tx any, taskID, choice, actorID string) error {
-	query := `UPDATE flowstate_tasks SET status = 'COMPLETED', choice = $1, completed_by = $2, completed_at = NOW() WHERE id = $3`
+	query := `UPDATE flowstep_tasks SET status = 'COMPLETED', choice = $1, completed_by = $2, completed_at = NOW() WHERE id = $3`
 
 	if tx != nil {
 		pgxTx, err := getTx(tx)

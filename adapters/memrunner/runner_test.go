@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/mawkeye/flowstate"
-	"github.com/mawkeye/flowstate/types"
+	"github.com/mawkeye/flowstep"
+	"github.com/mawkeye/flowstep/types"
 )
 
 type testActivity struct {
@@ -48,7 +48,7 @@ func TestRunnerDispatchUnregistered(t *testing.T) {
 	}
 
 	err := runner.Dispatch(ctx, inv)
-	if !errors.Is(err, flowstate.ErrActivityNotRegistered) {
+	if !errors.Is(err, flowstep.ErrActivityNotRegistered) {
 		t.Errorf("expected ErrActivityNotRegistered, got %v", err)
 	}
 }

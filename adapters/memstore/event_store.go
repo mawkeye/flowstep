@@ -4,10 +4,10 @@ import (
 	"context"
 	"sync"
 
-	"github.com/mawkeye/flowstate/types"
+	"github.com/mawkeye/flowstep/types"
 )
 
-// EventStore is an in-memory implementation of flowstate.EventStore.
+// EventStore is an in-memory implementation of flowstep.EventStore.
 type EventStore struct {
 	mu     sync.RWMutex
 	events []types.DomainEvent

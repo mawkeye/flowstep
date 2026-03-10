@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mawkeye/flowstate/types"
+	"github.com/mawkeye/flowstep/types"
 )
 
 // ─── minimal stubs ────────────────────────────────────────────────────────────

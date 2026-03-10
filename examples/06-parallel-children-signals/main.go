@@ -28,38 +28,38 @@ import (
 	"log"
 	"os"
 
-	"github.com/mawkeye/flowstate"
-	"github.com/mawkeye/flowstate/adapters/memstore"
-	"github.com/mawkeye/flowstate/types"
+	"github.com/mawkeye/flowstep"
+	"github.com/mawkeye/flowstep/adapters/memstore"
+	"github.com/mawkeye/flowstep/types"
 )
 
 const itemWorkflowType = "item_workflow"
 
 // buildOrderWorkflow defines the parent purchase order workflow.
 func buildOrderWorkflow() (*types.Definition, error) {
-	return flowstate.Define("purchase_order", "purchase_order_workflow").
+	return flowstep.Define("purchase_order", "purchase_order_workflow").
 		Version(1).
 		States(
-			flowstate.Initial("CREATED"),
-			flowstate.State("PROCESSING"),
-			flowstate.State("AWAITING_ITEMS"),
-			flowstate.State("AWAITING_PAYMENT"),
-			flowstate.Terminal("CONFIRMED"),
-			flowstate.Terminal("CANCELLED"),
+			flowstep.Initial("CREATED"),
+			flowstep.State("PROCESSING"),
+			flowstep.State("AWAITING_ITEMS"),
+			flowstep.State("AWAITING_PAYMENT"),
+			flowstep.Terminal("CONFIRMED"),
+			flowstep.Terminal("CANCELLED"),
 		).
 		Transition("start",
-			flowstate.From("CREATED"),
-			flowstate.To("PROCESSING"),
-			flowstate.Event("OrderStarted"),
+			flowstep.From("CREATED"),
+			flowstep.To("PROCESSING"),
+			flowstep.Event("OrderStarted"),
 		).
 		Transition("fan_out",
-			flowstate.From("PROCESSING"),
-			flowstate.To("AWAITING_ITEMS"),
-			flowstate.Event("ItemsFannedOut"),
+			flowstep.From("PROCESSING"),
+			flowstep.To("AWAITING_ITEMS"),
+			flowstep.Event("ItemsFannedOut"),
 			// SpawnChildren fans out to multiple parallel item workflows.
 			// InputsFn receives nil (called with aggregate=nil by engine).
 			// Return one map per child — here we spawn 3 items.
-			flowstate.SpawnChildren(types.ChildrenDef{
+			flowstep.SpawnChildren(types.ChildrenDef{
 				WorkflowType: itemWorkflowType,
 				InputsFn: func(_ any) []map[string]any {
 					return []map[string]any{
@@ -74,23 +74,23 @@ func buildOrderWorkflow() (*types.Definition, error) {
 		).
 		// Fires when all children in the group have reached a terminal state.
 		Transition("items_ready",
-			flowstate.From("AWAITING_ITEMS"),
-			flowstate.To("AWAITING_PAYMENT"),
-			flowstate.OnChildrenJoined(),
-			flowstate.Event("ItemsReady"),
+			flowstep.From("AWAITING_ITEMS"),
+			flowstep.To("AWAITING_PAYMENT"),
+			flowstep.OnChildrenJoined(),
+			flowstep.Event("ItemsReady"),
 		).
 		// Payment signals
 		Transition("payment_ok",
-			flowstate.From("AWAITING_PAYMENT"),
-			flowstate.To("CONFIRMED"),
-			flowstate.OnSignal("payment_succeeded"),
-			flowstate.Event("OrderConfirmed"),
+			flowstep.From("AWAITING_PAYMENT"),
+			flowstep.To("CONFIRMED"),
+			flowstep.OnSignal("payment_succeeded"),
+			flowstep.Event("OrderConfirmed"),
 		).
 		Transition("payment_fail",
-			flowstate.From("AWAITING_PAYMENT"),
-			flowstate.To("CANCELLED"),
-			flowstate.OnSignal("payment_failed"),
-			flowstate.Event("OrderCancelled"),
+			flowstep.From("AWAITING_PAYMENT"),
+			flowstep.To("CANCELLED"),
+			flowstep.OnSignal("payment_failed"),
+			flowstep.Event("OrderCancelled"),
 		).
 		Build()
 }
@@ -98,28 +98,28 @@ func buildOrderWorkflow() (*types.Definition, error) {
 // buildItemWorkflow defines the child item processing workflow.
 func buildItemWorkflow() (*types.Definition, error) {
 	// Aggregate type "item" is distinct from parent's "purchase_order".
-	return flowstate.Define("item", itemWorkflowType).
+	return flowstep.Define("item", itemWorkflowType).
 		Version(1).
 		States(
-			flowstate.Initial("CREATED"),
-			flowstate.State("PROCESSING"),
-			flowstate.Terminal("DONE"),
-			flowstate.Terminal("FAILED"),
+			flowstep.Initial("CREATED"),
+			flowstep.State("PROCESSING"),
+			flowstep.Terminal("DONE"),
+			flowstep.Terminal("FAILED"),
 		).
 		Transition("process",
-			flowstate.From("CREATED"),
-			flowstate.To("PROCESSING"),
-			flowstate.Event("ItemProcessingStarted"),
+			flowstep.From("CREATED"),
+			flowstep.To("PROCESSING"),
+			flowstep.Event("ItemProcessingStarted"),
 		).
 		Transition("complete",
-			flowstate.From("PROCESSING"),
-			flowstate.To("DONE"),
-			flowstate.Event("ItemCompleted"),
+			flowstep.From("PROCESSING"),
+			flowstep.To("DONE"),
+			flowstep.Event("ItemCompleted"),
 		).
 		Transition("fail",
-			flowstate.From("CREATED", "PROCESSING"),
-			flowstate.To("FAILED"),
-			flowstate.Event("ItemFailed"),
+			flowstep.From("CREATED", "PROCESSING"),
+			flowstep.To("FAILED"),
+			flowstep.Event("ItemFailed"),
 		).
 		Build()
 }
@@ -142,11 +142,11 @@ func main() {
 	}
 	fmt.Println("Wrote Mermaid diagrams to examples/06-parallel-children-signals/workflow.md")
 
-	engine, err := flowstate.NewEngine(
-		flowstate.WithEventStore(memstore.NewEventStore()),
-		flowstate.WithInstanceStore(memstore.NewInstanceStore()),
-		flowstate.WithChildStore(memstore.NewChildStore()),
-		flowstate.WithTxProvider(memstore.NewTxProvider()),
+	engine, err := flowstep.NewEngine(
+		flowstep.WithEventStore(memstore.NewEventStore()),
+		flowstep.WithInstanceStore(memstore.NewInstanceStore()),
+		flowstep.WithChildStore(memstore.NewChildStore()),
+		flowstep.WithTxProvider(memstore.NewTxProvider()),
 	)
 	if err != nil {
 		log.Fatalf("create engine: %v", err)
@@ -207,7 +207,7 @@ func main() {
 		// The engine evaluates JoinAll and returns ErrNoMatchingSignal (join not yet
 		// satisfied) until the LAST child completes — that is expected, not an error.
 		joinResult, err := engine.ChildCompleted(ctx, child.ChildAggregateType, child.ChildAggregateID, "DONE")
-		if err != nil && !errors.Is(err, flowstate.ErrNoMatchingSignal) {
+		if err != nil && !errors.Is(err, flowstep.ErrNoMatchingSignal) {
 			log.Fatalf("ChildCompleted item %d: %v", i, err)
 		}
 		if joinResult != nil {

@@ -11,7 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/mawkeye/flowstate/types"
+	"github.com/mawkeye/flowstep/types"
 )
 
 // Deps holds all external dependencies injected by the root package.
@@ -77,7 +77,7 @@ func (e *Engine) Shutdown(ctx context.Context) error {
 
 func (e *Engine) checkShutdown() error {
 	if e.shutdown.Load() {
-		return fmt.Errorf("flowstate: engine is shut down: %w", e.deps.ErrEngineShutdown)
+		return fmt.Errorf("flowstep: engine is shut down: %w", e.deps.ErrEngineShutdown)
 	}
 	return nil
 }
@@ -161,11 +161,11 @@ func (e *Engine) loadInstanceAndDef(ctx context.Context, aggregateType, aggregat
 	instance, err := e.deps.InstanceStore.Get(ctx, aggregateType, aggregateID)
 	if err != nil {
 		if !errors.Is(err, e.deps.ErrInstanceNotFound) {
-			return nil, nil, fmt.Errorf("flowstate: get instance: %w", err)
+			return nil, nil, fmt.Errorf("flowstep: get instance: %w", err)
 		}
 		def, ok := e.definitionFor(aggregateType, 0)
 		if !ok {
-			return nil, nil, fmt.Errorf("flowstate: no workflow registered for aggregate type %q", aggregateType)
+			return nil, nil, fmt.Errorf("flowstep: no workflow registered for aggregate type %q", aggregateType)
 		}
 		instance, err = e.createInstance(ctx, def, aggregateType, aggregateID)
 		if err != nil {
@@ -175,7 +175,7 @@ func (e *Engine) loadInstanceAndDef(ctx context.Context, aggregateType, aggregat
 	}
 	def, ok := e.definitionFor(aggregateType, instance.WorkflowVersion)
 	if !ok {
-		return nil, nil, fmt.Errorf("flowstate: no workflow version %d registered for aggregate type %q",
+		return nil, nil, fmt.Errorf("flowstep: no workflow version %d registered for aggregate type %q",
 			instance.WorkflowVersion, aggregateType)
 	}
 	return def, instance, nil
@@ -193,19 +193,19 @@ func (e *Engine) validateTransition(
 	// 1. Look up transition
 	tr, ok := def.Transitions[transitionName]
 	if !ok {
-		return types.TransitionDef{}, "", fmt.Errorf("flowstate: transition %q not found in workflow %q: %w",
+		return types.TransitionDef{}, "", fmt.Errorf("flowstep: transition %q not found in workflow %q: %w",
 			transitionName, def.WorkflowType, e.deps.ErrInvalidTransition)
 	}
 
 	// 2. Check if already terminal
 	if st, exists := def.States[instance.CurrentState]; exists && st.IsTerminal {
-		return types.TransitionDef{}, "", fmt.Errorf("flowstate: workflow %s/%s is in terminal state %q: %w",
+		return types.TransitionDef{}, "", fmt.Errorf("flowstep: workflow %s/%s is in terminal state %q: %w",
 			instance.AggregateType, instance.AggregateID, instance.CurrentState, e.deps.ErrAlreadyTerminal)
 	}
 
 	// 3. Validate source state
 	if !slices.Contains(tr.Sources, instance.CurrentState) {
-		return types.TransitionDef{}, "", fmt.Errorf("flowstate: transition %q not valid from state %q (expected one of %v): %w",
+		return types.TransitionDef{}, "", fmt.Errorf("flowstep: transition %q not valid from state %q (expected one of %v): %w",
 			transitionName, instance.CurrentState, tr.Sources, e.deps.ErrInvalidTransition)
 	}
 
@@ -262,18 +262,18 @@ func (e *Engine) commitTransition(
 	// 3. Persist event + updated instance in a transaction
 	tx, err := e.deps.TxProvider.Begin(ctx)
 	if err != nil {
-		return types.DomainEvent{}, fmt.Errorf("flowstate: begin tx: %w", err)
+		return types.DomainEvent{}, fmt.Errorf("flowstep: begin tx: %w", err)
 	}
 	if err := e.deps.EventStore.Append(ctx, tx, event); err != nil {
 		_ = e.deps.TxProvider.Rollback(ctx, tx)
-		return types.DomainEvent{}, fmt.Errorf("flowstate: append event: %w", err)
+		return types.DomainEvent{}, fmt.Errorf("flowstep: append event: %w", err)
 	}
 	if err := e.deps.InstanceStore.Update(ctx, tx, *instance); err != nil {
 		_ = e.deps.TxProvider.Rollback(ctx, tx)
-		return types.DomainEvent{}, fmt.Errorf("flowstate: update instance: %w", err)
+		return types.DomainEvent{}, fmt.Errorf("flowstep: update instance: %w", err)
 	}
 	if err := e.deps.TxProvider.Commit(ctx, tx); err != nil {
-		return types.DomainEvent{}, fmt.Errorf("flowstate: commit tx: %w", err)
+		return types.DomainEvent{}, fmt.Errorf("flowstep: commit tx: %w", err)
 	}
 
 	return event, nil
@@ -467,7 +467,7 @@ func (e *Engine) Signal(ctx context.Context, input types.SignalInput) (*types.Tr
 		if errors.Is(err, e.deps.ErrInstanceNotFound) {
 			latestDef, ok := e.definitionFor(input.TargetAggregateType, 0)
 			if !ok {
-				return nil, fmt.Errorf("flowstate: no workflow registered for aggregate type %q", input.TargetAggregateType)
+				return nil, fmt.Errorf("flowstep: no workflow registered for aggregate type %q", input.TargetAggregateType)
 			}
 			instance, err = e.createInstance(ctx, latestDef, input.TargetAggregateType, input.TargetAggregateID)
 			if err != nil {
@@ -475,13 +475,13 @@ func (e *Engine) Signal(ctx context.Context, input types.SignalInput) (*types.Tr
 			}
 			def = latestDef
 		} else {
-			return nil, fmt.Errorf("flowstate: get instance: %w", err)
+			return nil, fmt.Errorf("flowstep: get instance: %w", err)
 		}
 	} else {
 		var ok bool
 		def, ok = e.definitionFor(input.TargetAggregateType, instance.WorkflowVersion)
 		if !ok {
-			return nil, fmt.Errorf("flowstate: no workflow version %d registered for aggregate type %q",
+			return nil, fmt.Errorf("flowstep: no workflow version %d registered for aggregate type %q",
 				instance.WorkflowVersion, input.TargetAggregateType)
 		}
 	}
@@ -497,11 +497,11 @@ func (e *Engine) Signal(ctx context.Context, input types.SignalInput) (*types.Tr
 	}
 
 	if len(matches) == 0 {
-		return nil, fmt.Errorf("flowstate: no transition matches signal %q from state %q: %w",
+		return nil, fmt.Errorf("flowstep: no transition matches signal %q from state %q: %w",
 			input.SignalName, instance.CurrentState, e.deps.ErrNoMatchingSignal)
 	}
 	if len(matches) > 1 {
-		return nil, fmt.Errorf("flowstate: multiple transitions match signal %q from state %q: %w",
+		return nil, fmt.Errorf("flowstep: multiple transitions match signal %q from state %q: %w",
 			input.SignalName, instance.CurrentState, e.deps.ErrSignalAmbiguous)
 	}
 
@@ -518,25 +518,25 @@ func (e *Engine) CompleteTask(ctx context.Context, taskID, choice, actorID strin
 	e.wg.Add(1)
 	defer e.wg.Done()
 	if e.deps.TaskStore == nil {
-		return nil, fmt.Errorf("flowstate: TaskStore not configured")
+		return nil, fmt.Errorf("flowstep: TaskStore not configured")
 	}
 
 	// Get the task
 	task, err := e.deps.TaskStore.Get(ctx, taskID)
 	if err != nil {
-		return nil, fmt.Errorf("flowstate: get task: %w", err)
+		return nil, fmt.Errorf("flowstep: get task: %w", err)
 	}
 
 	// Load instance
 	instance, err := e.deps.InstanceStore.Get(ctx, task.AggregateType, task.AggregateID)
 	if err != nil {
-		return nil, fmt.Errorf("flowstate: get instance: %w", err)
+		return nil, fmt.Errorf("flowstep: get instance: %w", err)
 	}
 
 	// Look up definition for instance's version
 	def, ok := e.definitionFor(task.AggregateType, instance.WorkflowVersion)
 	if !ok {
-		return nil, fmt.Errorf("flowstate: no workflow version %d registered for aggregate type %q",
+		return nil, fmt.Errorf("flowstep: no workflow version %d registered for aggregate type %q",
 			instance.WorkflowVersion, task.AggregateType)
 	}
 
@@ -551,7 +551,7 @@ func (e *Engine) CompleteTask(ctx context.Context, taskID, choice, actorID strin
 	}
 
 	if len(matches) == 0 {
-		return nil, fmt.Errorf("flowstate: no transition matches task completion for type %q: %w",
+		return nil, fmt.Errorf("flowstep: no transition matches task completion for type %q: %w",
 			task.TaskType, e.deps.ErrNoMatchingSignal)
 	}
 
@@ -568,14 +568,14 @@ func (e *Engine) CompleteTask(ctx context.Context, taskID, choice, actorID strin
 			}
 		}
 		if !found {
-			return nil, fmt.Errorf("flowstate: choice %q does not match any transition: %w",
+			return nil, fmt.Errorf("flowstep: choice %q does not match any transition: %w",
 				choice, e.deps.ErrInvalidChoice)
 		}
 	}
 
 	// Complete the task in store
 	if err := e.deps.TaskStore.Complete(ctx, nil, taskID, choice, actorID); err != nil {
-		return nil, fmt.Errorf("flowstate: complete task in store: %w", err)
+		return nil, fmt.Errorf("flowstep: complete task in store: %w", err)
 	}
 
 	// Execute the matched transition
@@ -596,13 +596,13 @@ func (e *Engine) ChildCompleted(ctx context.Context, childAggregateType, childAg
 	defer e.wg.Done()
 
 	if e.deps.ChildStore == nil {
-		return nil, fmt.Errorf("flowstate: ChildStore not configured")
+		return nil, fmt.Errorf("flowstep: ChildStore not configured")
 	}
 
 	// Look up child relation
 	relation, err := e.deps.ChildStore.GetByChild(ctx, childAggregateType, childAggregateID)
 	if err != nil {
-		return nil, fmt.Errorf("flowstate: get child relation: %w", err)
+		return nil, fmt.Errorf("flowstep: get child relation: %w", err)
 	}
 
 	// Mark child as completed
@@ -613,13 +613,13 @@ func (e *Engine) ChildCompleted(ctx context.Context, childAggregateType, childAg
 	// Load parent instance
 	instance, err := e.deps.InstanceStore.Get(ctx, relation.ParentAggregateType, relation.ParentAggregateID)
 	if err != nil {
-		return nil, fmt.Errorf("flowstate: get parent instance: %w", err)
+		return nil, fmt.Errorf("flowstep: get parent instance: %w", err)
 	}
 
 	// Look up parent definition for instance's version
 	def, ok := e.definitionFor(relation.ParentAggregateType, instance.WorkflowVersion)
 	if !ok {
-		return nil, fmt.Errorf("flowstate: no workflow version %d registered for parent aggregate type %q",
+		return nil, fmt.Errorf("flowstep: no workflow version %d registered for parent aggregate type %q",
 			instance.WorkflowVersion, relation.ParentAggregateType)
 	}
 
@@ -641,7 +641,7 @@ func (e *Engine) ChildCompleted(ctx context.Context, childAggregateType, childAg
 		}
 	}
 
-	return nil, fmt.Errorf("flowstate: no OnChildCompleted transition matches child type %q from parent state %q: %w",
+	return nil, fmt.Errorf("flowstep: no OnChildCompleted transition matches child type %q from parent state %q: %w",
 		childAggregateType, instance.CurrentState, e.deps.ErrNoMatchingSignal)
 }
 
@@ -654,7 +654,7 @@ func (e *Engine) evaluateJoinPolicy(
 ) (*types.TransitionResult, error) {
 	siblings, err := e.deps.ChildStore.GetByGroup(ctx, relation.GroupID)
 	if err != nil {
-		return nil, fmt.Errorf("flowstate: get siblings by group: %w", err)
+		return nil, fmt.Errorf("flowstep: get siblings by group: %w", err)
 	}
 
 	completedCount := 0
@@ -683,7 +683,7 @@ func (e *Engine) evaluateJoinPolicy(
 	}
 
 	if !satisfied {
-		return nil, fmt.Errorf("flowstate: join policy %q not yet satisfied (%d/%d completed): %w",
+		return nil, fmt.Errorf("flowstep: join policy %q not yet satisfied (%d/%d completed): %w",
 			joinMode, completedCount, total, e.deps.ErrNoMatchingSignal)
 	}
 
@@ -700,7 +700,7 @@ func (e *Engine) evaluateJoinPolicy(
 		}
 	}
 
-	return nil, fmt.Errorf("flowstate: no OnChildrenJoined transition from parent state %q: %w",
+	return nil, fmt.Errorf("flowstep: no OnChildrenJoined transition from parent state %q: %w",
 		instance.CurrentState, e.deps.ErrNoMatchingSignal)
 }
 
@@ -716,19 +716,19 @@ func (e *Engine) ForceState(ctx context.Context, aggregateType, aggregateID, tar
 	// Load instance (must exist)
 	instance, err := e.deps.InstanceStore.Get(ctx, aggregateType, aggregateID)
 	if err != nil {
-		return nil, fmt.Errorf("flowstate: get instance: %w", err)
+		return nil, fmt.Errorf("flowstep: get instance: %w", err)
 	}
 
 	// Look up definition for instance's version
 	def, ok := e.definitionFor(aggregateType, instance.WorkflowVersion)
 	if !ok {
-		return nil, fmt.Errorf("flowstate: no workflow version %d registered for aggregate type %q",
+		return nil, fmt.Errorf("flowstep: no workflow version %d registered for aggregate type %q",
 			instance.WorkflowVersion, aggregateType)
 	}
 
 	// Validate target state exists in definition
 	if _, exists := def.States[targetState]; !exists {
-		return nil, fmt.Errorf("flowstate: target state %q not found in workflow %q: %w",
+		return nil, fmt.Errorf("flowstep: target state %q not found in workflow %q: %w",
 			targetState, def.WorkflowType, e.deps.ErrInvalidTransition)
 	}
 
@@ -761,18 +761,18 @@ func (e *Engine) ForceState(ctx context.Context, aggregateType, aggregateID, tar
 	// Transaction: persist
 	tx, err := e.deps.TxProvider.Begin(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("flowstate: begin tx: %w", err)
+		return nil, fmt.Errorf("flowstep: begin tx: %w", err)
 	}
 	if err := e.deps.EventStore.Append(ctx, tx, event); err != nil {
 		_ = e.deps.TxProvider.Rollback(ctx, tx)
-		return nil, fmt.Errorf("flowstate: append event: %w", err)
+		return nil, fmt.Errorf("flowstep: append event: %w", err)
 	}
 	if err := e.deps.InstanceStore.Update(ctx, tx, *instance); err != nil {
 		_ = e.deps.TxProvider.Rollback(ctx, tx)
-		return nil, fmt.Errorf("flowstate: update instance: %w", err)
+		return nil, fmt.Errorf("flowstep: update instance: %w", err)
 	}
 	if err := e.deps.TxProvider.Commit(ctx, tx); err != nil {
-		return nil, fmt.Errorf("flowstate: commit tx: %w", err)
+		return nil, fmt.Errorf("flowstep: commit tx: %w", err)
 	}
 
 	// Post-commit: emit event
@@ -821,16 +821,16 @@ func (e *Engine) createInstance(
 
 	tx, err := e.deps.TxProvider.Begin(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("flowstate: begin tx for create: %w", err)
+		return nil, fmt.Errorf("flowstep: begin tx for create: %w", err)
 	}
 
 	if err := e.deps.InstanceStore.Create(ctx, tx, newInstance); err != nil {
 		_ = e.deps.TxProvider.Rollback(ctx, tx)
-		return nil, fmt.Errorf("flowstate: create instance: %w", err)
+		return nil, fmt.Errorf("flowstep: create instance: %w", err)
 	}
 
 	if err := e.deps.TxProvider.Commit(ctx, tx); err != nil {
-		return nil, fmt.Errorf("flowstate: commit create: %w", err)
+		return nil, fmt.Errorf("flowstep: commit create: %w", err)
 	}
 
 	return &newInstance, nil
@@ -846,7 +846,7 @@ func (e *Engine) resolveRoute(ctx context.Context, tr types.TransitionDef, aggre
 		if route.Condition != nil {
 			matched, err := route.Condition.Evaluate(ctx, aggregate, params)
 			if err != nil {
-				return "", fmt.Errorf("flowstate: condition evaluation failed: %w", err)
+				return "", fmt.Errorf("flowstep: condition evaluation failed: %w", err)
 			}
 			if matched {
 				return route.Target, nil
@@ -856,7 +856,7 @@ func (e *Engine) resolveRoute(ctx context.Context, tr types.TransitionDef, aggre
 	if defaultTarget != "" {
 		return defaultTarget, nil
 	}
-	return "", fmt.Errorf("flowstate: no condition matched and no default route: %w", e.deps.ErrNoMatchingRoute)
+	return "", fmt.Errorf("flowstep: no condition matched and no default route: %w", e.deps.ErrNoMatchingRoute)
 }
 
 func (e *Engine) runGuards(ctx context.Context, workflowType string, tr types.TransitionDef, aggregate any, params map[string]any) error {

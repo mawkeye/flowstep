@@ -1,4 +1,4 @@
-// Package redisbus provides a Redis Streams implementation of the flowstate EventBus.
+// Package redisbus provides a Redis Streams implementation of the flowstep EventBus.
 // Uses XADD to emit events and XREADGROUP for consumer group subscriptions.
 package redisbus
 
@@ -8,10 +8,10 @@ import (
 	"fmt"
 
 	"github.com/redis/go-redis/v9"
-	"github.com/mawkeye/flowstate/types"
+	"github.com/mawkeye/flowstep/types"
 )
 
-// Bus implements flowstate.EventBus using Redis Streams.
+// Bus implements flowstep.EventBus using Redis Streams.
 type Bus struct {
 	client     *redis.Client
 	streamName string

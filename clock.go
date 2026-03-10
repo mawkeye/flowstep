@@ -1,9 +1,9 @@
-package flowstate
+package flowstep
 
 import (
 	"time"
 
-	"github.com/mawkeye/flowstate/types"
+	"github.com/mawkeye/flowstep/types"
 )
 
 // Clock provides deterministic time for the engine.

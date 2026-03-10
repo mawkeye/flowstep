@@ -1,11 +1,11 @@
-package flowstate
+package flowstep
 
 import (
 	"context"
 	"fmt"
 
-	internalengine "github.com/mawkeye/flowstate/internal/engine"
-	"github.com/mawkeye/flowstate/types"
+	internalengine "github.com/mawkeye/flowstep/internal/engine"
+	"github.com/mawkeye/flowstep/types"
 )
 
 // Engine is the public workflow engine. Delegates to internal/engine.
@@ -30,13 +30,13 @@ func NewEngine(opts ...Option) (*Engine, error) {
 
 	// Validate required dependencies
 	if cfg.eventStore == nil {
-		return nil, fmt.Errorf("flowstate: EventStore is required")
+		return nil, fmt.Errorf("flowstep: EventStore is required")
 	}
 	if cfg.instanceStore == nil {
-		return nil, fmt.Errorf("flowstate: InstanceStore is required")
+		return nil, fmt.Errorf("flowstep: InstanceStore is required")
 	}
 	if cfg.txProvider == nil {
-		return nil, fmt.Errorf("flowstate: TxProvider is required")
+		return nil, fmt.Errorf("flowstep: TxProvider is required")
 	}
 
 	deps := internalengine.Deps{

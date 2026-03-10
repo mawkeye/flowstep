@@ -5,11 +5,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mawkeye/flowstate"
-	"github.com/mawkeye/flowstate/types"
+	"github.com/mawkeye/flowstep"
+	"github.com/mawkeye/flowstep/types"
 )
 
-// TaskStore is an in-memory implementation of flowstate.TaskStore.
+// TaskStore is an in-memory implementation of flowstep.TaskStore.
 type TaskStore struct {
 	mu    sync.RWMutex
 	tasks map[string]types.PendingTask // key: task ID
@@ -34,7 +34,7 @@ func (s *TaskStore) Get(_ context.Context, taskID string) (*types.PendingTask, e
 	defer s.mu.RUnlock()
 	task, ok := s.tasks[taskID]
 	if !ok {
-		return nil, flowstate.ErrTaskNotFound
+		return nil, flowstep.ErrTaskNotFound
 	}
 	copy := task
 	return &copy, nil
@@ -57,10 +57,10 @@ func (s *TaskStore) Complete(_ context.Context, _ any, taskID, choice, actorID s
 	defer s.mu.Unlock()
 	task, ok := s.tasks[taskID]
 	if !ok {
-		return flowstate.ErrTaskNotFound
+		return flowstep.ErrTaskNotFound
 	}
 	if task.Status == types.TaskStatusCompleted {
-		return flowstate.ErrTaskAlreadyCompleted
+		return flowstep.ErrTaskAlreadyCompleted
 	}
 	// CompletedAt uses the wall clock (time.Now) because the store interface
 	// does not accept a timestamp parameter. For production use, prefer a store

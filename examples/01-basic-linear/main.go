@@ -1,6 +1,6 @@
 // Example 01: Basic Linear Workflow
 //
-// Demonstrates the simplest possible flowstate setup:
+// Demonstrates the simplest possible flowstep setup:
 //   - Define a workflow with states and transitions
 //   - Create an engine with in-memory adapters
 //   - Execute transitions and inspect results
@@ -16,9 +16,9 @@ import (
 	"log"
 	"os"
 
-	"github.com/mawkeye/flowstate"
-	"github.com/mawkeye/flowstate/adapters/memstore"
-	"github.com/mawkeye/flowstate/types"
+	"github.com/mawkeye/flowstep"
+	"github.com/mawkeye/flowstep/adapters/memstore"
+	"github.com/mawkeye/flowstep/types"
 )
 
 func main() {
@@ -27,28 +27,28 @@ func main() {
 	// States:    CREATED (initial) → PROCESSING → DONE (terminal)
 	//                         ↘            ↘
 	//                          CANCELLED (terminal)
-	def, err := flowstate.Define("order", "order_workflow").
+	def, err := flowstep.Define("order", "order_workflow").
 		Version(1).
 		States(
-			flowstate.Initial("CREATED"),
-			flowstate.State("PROCESSING"),
-			flowstate.Terminal("DONE"),
-			flowstate.Terminal("CANCELLED"),
+			flowstep.Initial("CREATED"),
+			flowstep.State("PROCESSING"),
+			flowstep.Terminal("DONE"),
+			flowstep.Terminal("CANCELLED"),
 		).
 		Transition("start_processing",
-			flowstate.From("CREATED"),
-			flowstate.To("PROCESSING"),
-			flowstate.Event("OrderStarted"),
+			flowstep.From("CREATED"),
+			flowstep.To("PROCESSING"),
+			flowstep.Event("OrderStarted"),
 		).
 		Transition("complete",
-			flowstate.From("PROCESSING"),
-			flowstate.To("DONE"),
-			flowstate.Event("OrderCompleted"),
+			flowstep.From("PROCESSING"),
+			flowstep.To("DONE"),
+			flowstep.Event("OrderCompleted"),
 		).
 		Transition("cancel",
-			flowstate.From("CREATED", "PROCESSING"),
-			flowstate.To("CANCELLED"),
-			flowstate.Event("OrderCancelled"),
+			flowstep.From("CREATED", "PROCESSING"),
+			flowstep.To("CANCELLED"),
+			flowstep.Event("OrderCancelled"),
 		).
 		Build()
 	if err != nil {
@@ -63,10 +63,10 @@ func main() {
 	fmt.Println("Wrote Mermaid diagram to examples/01-basic-linear/workflow.md")
 
 	// 3. Create an engine — only three adapters are required
-	engine, err := flowstate.NewEngine(
-		flowstate.WithEventStore(memstore.NewEventStore()),
-		flowstate.WithInstanceStore(memstore.NewInstanceStore()),
-		flowstate.WithTxProvider(memstore.NewTxProvider()),
+	engine, err := flowstep.NewEngine(
+		flowstep.WithEventStore(memstore.NewEventStore()),
+		flowstep.WithInstanceStore(memstore.NewInstanceStore()),
+		flowstep.WithTxProvider(memstore.NewTxProvider()),
 	)
 	if err != nil {
 		log.Fatalf("create engine: %v", err)

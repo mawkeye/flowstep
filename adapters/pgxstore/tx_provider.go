@@ -8,7 +8,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// TxProvider implements flowstate.TxProvider using pgx transactions.
+// TxProvider implements flowstep.TxProvider using pgx transactions.
 type TxProvider struct {
 	pool *pgxpool.Pool
 }

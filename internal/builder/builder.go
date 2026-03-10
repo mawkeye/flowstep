@@ -3,7 +3,7 @@ package builder
 import (
 	"fmt"
 
-	"github.com/mawkeye/flowstate/types"
+	"github.com/mawkeye/flowstep/types"
 )
 
 // transitionBuilder collects options for a single transition.
@@ -272,7 +272,7 @@ func (b *DefBuilder) Build() (*types.Definition, error) {
 	// Collect transitions (detect duplicates)
 	for _, t := range b.transitions {
 		if _, exists := def.Transitions[t.name]; exists {
-			return nil, fmt.Errorf("flowstate: duplicate transition %q: %w", t.name, b.errDupTransition)
+			return nil, fmt.Errorf("flowstep: duplicate transition %q: %w", t.name, b.errDupTransition)
 		}
 
 		tb := &transitionBuilder{name: t.name, triggerType: types.TriggerDirect}

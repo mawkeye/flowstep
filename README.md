@@ -1,4 +1,4 @@
-# flowstate <!-- omit in toc -->
+# flowstep <!-- omit in toc -->
 
 A declarative workflow engine for Go. Define state machines with a fluent builder API, execute transitions with guards, signals, activities, and human-in-the-loop tasks. Core package has zero external dependencies.
 
@@ -52,7 +52,7 @@ The package requires a minimum version of Go 1.25.
 ## Installation
 
 ```bash
-go get github.com/mawkeye/flowstate
+go get github.com/mawkeye/flowstep
 ```
 
 ## Quick Start
@@ -65,34 +65,34 @@ import (
     "fmt"
     "log"
 
-    "github.com/mawkeye/flowstate"
-    "github.com/mawkeye/flowstate/adapters/memstore"
+    "github.com/mawkeye/flowstep"
+    "github.com/mawkeye/flowstep/adapters/memstore"
 )
 
 func main() {
     // 1. Define a workflow
-    def, err := flowstate.Define("order", "order_workflow").
+    def, err := flowstep.Define("order", "order_workflow").
         Version(1).
         States(
-            flowstate.Initial("CREATED"),
-            flowstate.State("PROCESSING"),
-            flowstate.Terminal("DONE"),
-            flowstate.Terminal("CANCELLED"),
+            flowstep.Initial("CREATED"),
+            flowstep.State("PROCESSING"),
+            flowstep.Terminal("DONE"),
+            flowstep.Terminal("CANCELLED"),
         ).
         Transition("start_processing",
-            flowstate.From("CREATED"),
-            flowstate.To("PROCESSING"),
-            flowstate.Event("OrderStarted"),
+            flowstep.From("CREATED"),
+            flowstep.To("PROCESSING"),
+            flowstep.Event("OrderStarted"),
         ).
         Transition("complete",
-            flowstate.From("PROCESSING"),
-            flowstate.To("DONE"),
-            flowstate.Event("OrderCompleted"),
+            flowstep.From("PROCESSING"),
+            flowstep.To("DONE"),
+            flowstep.Event("OrderCompleted"),
         ).
         Transition("cancel",
-            flowstate.From("CREATED", "PROCESSING"),
-            flowstate.To("CANCELLED"),
-            flowstate.Event("OrderCancelled"),
+            flowstep.From("CREATED", "PROCESSING"),
+            flowstep.To("CANCELLED"),
+            flowstep.Event("OrderCancelled"),
         ).
         Build()
     if err != nil {
@@ -100,10 +100,10 @@ func main() {
     }
 
     // 2. Create an engine with in-memory adapters
-    engine, err := flowstate.NewEngine(
-        flowstate.WithEventStore(memstore.NewEventStore()),
-        flowstate.WithInstanceStore(memstore.NewInstanceStore()),
-        flowstate.WithTxProvider(memstore.NewTxProvider()),
+    engine, err := flowstep.NewEngine(
+        flowstep.WithEventStore(memstore.NewEventStore()),
+        flowstep.WithInstanceStore(memstore.NewInstanceStore()),
+        flowstep.WithTxProvider(memstore.NewTxProvider()),
     )
     if err != nil {
         log.Fatal(err)
@@ -140,11 +140,11 @@ func main() {
 Every workflow has exactly one **initial** state and at least one **terminal** state. Intermediate states are declared with `State`. States that wait for human input use `WaitState`.
 
 ```go
-flowstate.Initial("SUBMITTED")
-flowstate.State("IN_REVIEW")
-flowstate.WaitState("PENDING_APPROVAL")  // pauses for a task
-flowstate.Terminal("APPROVED")
-flowstate.Terminal("REJECTED")
+flowstep.Initial("SUBMITTED")
+flowstep.State("IN_REVIEW")
+flowstep.WaitState("PENDING_APPROVAL")  // pauses for a task
+flowstep.Terminal("APPROVED")
+flowstep.Terminal("REJECTED")
 ```
 
 ### Transitions
@@ -152,20 +152,20 @@ flowstate.Terminal("REJECTED")
 A transition moves a workflow from one or more source states to a target state, optionally emitting a named event.
 
 ```go
-flowstate.Transition("approve",
-    flowstate.From("IN_REVIEW"),
-    flowstate.To("APPROVED"),
-    flowstate.Event("RequestApproved"),
+flowstep.Transition("approve",
+    flowstep.From("IN_REVIEW"),
+    flowstep.To("APPROVED"),
+    flowstep.Event("RequestApproved"),
 )
 ```
 
 A transition can originate from multiple states:
 
 ```go
-flowstate.Transition("cancel",
-    flowstate.From("SUBMITTED", "IN_REVIEW"),
-    flowstate.To("CANCELLED"),
-    flowstate.Event("RequestCancelled"),
+flowstep.Transition("cancel",
+    flowstep.From("SUBMITTED", "IN_REVIEW"),
+    flowstep.To("CANCELLED"),
+    flowstep.Event("RequestCancelled"),
 )
 ```
 
@@ -187,29 +187,29 @@ func (g *minimumAmountGuard) Check(ctx context.Context, aggregate any, params ma
 }
 
 // Use in a transition:
-flowstate.Transition("charge",
-    flowstate.From("PENDING"),
-    flowstate.To("CHARGED"),
-    flowstate.Guards(&minimumAmountGuard{minimum: 1.00}),
+flowstep.Transition("charge",
+    flowstep.From("PENDING"),
+    flowstep.To("CHARGED"),
+    flowstep.Guards(&minimumAmountGuard{minimum: 1.00}),
 )
 ```
 
-Guard failures are wrapped as `flowstate.ErrGuardFailed` and can be checked with `errors.Is`.
+Guard failures are wrapped as `flowstep.ErrGuardFailed` and can be checked with `errors.Is`.
 
 ### Conditional Routing
 
 Route a transition to different target states based on runtime conditions:
 
 ```go
-flowstate.Transition("evaluate",
-    flowstate.From("SUBMITTED"),
-    flowstate.Route(
-        flowstate.When(&highValueCondition{}),
-        flowstate.To("MANUAL_REVIEW"),
+flowstep.Transition("evaluate",
+    flowstep.From("SUBMITTED"),
+    flowstep.Route(
+        flowstep.When(&highValueCondition{}),
+        flowstep.To("MANUAL_REVIEW"),
     ),
-    flowstate.Route(
-        flowstate.Default(),
-        flowstate.To("AUTO_APPROVED"),
+    flowstep.Route(
+        flowstep.Default(),
+        flowstep.To("AUTO_APPROVED"),
     ),
 )
 ```
@@ -222,16 +222,16 @@ Signal-triggered transitions fire when an external system sends a named signal. 
 
 ```go
 // Define signal-triggered transitions
-flowstate.Transition("payment_ok",
-    flowstate.From("AWAITING_PAYMENT"),
-    flowstate.To("CONFIRMED"),
-    flowstate.OnSignal("payment_succeeded"),
+flowstep.Transition("payment_ok",
+    flowstep.From("AWAITING_PAYMENT"),
+    flowstep.To("CONFIRMED"),
+    flowstep.OnSignal("payment_succeeded"),
 )
 
-flowstate.Transition("payment_fail",
-    flowstate.From("AWAITING_PAYMENT"),
-    flowstate.To("CANCELLED"),
-    flowstate.OnSignal("payment_failed"),
+flowstep.Transition("payment_fail",
+    flowstep.From("AWAITING_PAYMENT"),
+    flowstep.To("CANCELLED"),
+    flowstep.OnSignal("payment_failed"),
 )
 
 // Send a signal at runtime
@@ -249,10 +249,10 @@ Wait states pause a workflow until a human (or external system) completes a task
 
 ```go
 // Emit a task when entering a wait state
-flowstate.Transition("request_approval",
-    flowstate.From("SUBMITTED"),
-    flowstate.To("PENDING_APPROVAL"),
-    flowstate.EmitTask(types.TaskDef{
+flowstep.Transition("request_approval",
+    flowstep.From("SUBMITTED"),
+    flowstep.To("PENDING_APPROVAL"),
+    flowstep.EmitTask(types.TaskDef{
         Type:        "approval",
         Description: "Approve or reject the request",
         Options:     []string{"approve", "reject"},
@@ -261,15 +261,15 @@ flowstate.Transition("request_approval",
 )
 
 // Task-completion-triggered transitions (one per option)
-flowstate.Transition("approve",
-    flowstate.From("PENDING_APPROVAL"),
-    flowstate.To("APPROVED"),
-    flowstate.OnTaskCompleted("approval"),
+flowstep.Transition("approve",
+    flowstep.From("PENDING_APPROVAL"),
+    flowstep.To("APPROVED"),
+    flowstep.OnTaskCompleted("approval"),
 )
-flowstate.Transition("reject",
-    flowstate.From("PENDING_APPROVAL"),
-    flowstate.To("REJECTED"),
-    flowstate.OnTaskCompleted("approval"),
+flowstep.Transition("reject",
+    flowstep.From("PENDING_APPROVAL"),
+    flowstep.To("REJECTED"),
+    flowstep.OnTaskCompleted("approval"),
 )
 
 // Complete the task at runtime (choice matches a transition name)
@@ -281,29 +281,29 @@ result, err := engine.CompleteTask(ctx, taskID, "approve", "manager-1")
 Spawn a single child workflow:
 
 ```go
-flowstate.Transition("start_sub",
-    flowstate.From("PROCESSING"),
-    flowstate.To("WAITING_FOR_SUB"),
-    flowstate.SpawnChild(types.ChildDef{
+flowstep.Transition("start_sub",
+    flowstep.From("PROCESSING"),
+    flowstep.To("WAITING_FOR_SUB"),
+    flowstep.SpawnChild(types.ChildDef{
         WorkflowType: "sub_workflow",
         InputFrom:    "sub_input",
     }),
 )
 
-flowstate.Transition("sub_done",
-    flowstate.From("WAITING_FOR_SUB"),
-    flowstate.To("COMPLETED"),
-    flowstate.OnChildCompleted("sub_workflow"),
+flowstep.Transition("sub_done",
+    flowstep.From("WAITING_FOR_SUB"),
+    flowstep.To("COMPLETED"),
+    flowstep.OnChildCompleted("sub_workflow"),
 )
 ```
 
 Spawn parallel children with a join policy:
 
 ```go
-flowstate.Transition("fan_out",
-    flowstate.From("PROCESSING"),
-    flowstate.To("WAITING_FOR_ALL"),
-    flowstate.SpawnChildren(types.ChildrenDef{
+flowstep.Transition("fan_out",
+    flowstep.From("PROCESSING"),
+    flowstep.To("WAITING_FOR_ALL"),
+    flowstep.SpawnChildren(types.ChildrenDef{
         WorkflowType: "item_workflow",
         InputsFn:     func(agg any) []map[string]any { /* return one map per child */ },
         Join:         types.JoinAll(),             // wait for all children
@@ -312,10 +312,10 @@ flowstate.Transition("fan_out",
     }),
 )
 
-flowstate.Transition("all_done",
-    flowstate.From("WAITING_FOR_ALL"),
-    flowstate.To("COMPLETED"),
-    flowstate.OnChildrenJoined(),
+flowstep.Transition("all_done",
+    flowstep.From("WAITING_FOR_ALL"),
+    flowstep.To("COMPLETED"),
+    flowstep.OnChildrenJoined(),
 )
 ```
 
@@ -325,10 +325,10 @@ Activities perform async side-effects (API calls, emails, I/O). Two dispatch mod
 
 ```go
 // Fire-and-forget: transition completes immediately
-flowstate.Dispatch("send_email")
+flowstep.Dispatch("send_email")
 
 // Await result: engine waits for the activity to finish
-flowstate.DispatchAndWait("process_payment")
+flowstep.DispatchAndWait("process_payment")
 ```
 
 Implement the `Activity` interface:
@@ -349,10 +349,10 @@ Register activities with an `ActivityRunner`:
 runner := memrunner.New()
 runner.Register(&sendEmailActivity{})
 
-engine, _ := flowstate.NewEngine(
+engine, _ := flowstep.NewEngine(
     // ...
-    flowstate.WithActivityRunner(runner),
-    flowstate.WithActivityStore(memstore.NewActivityStore()),
+    flowstep.WithActivityRunner(runner),
+    flowstep.WithActivityStore(memstore.NewActivityStore()),
 )
 ```
 
@@ -361,20 +361,20 @@ engine, _ := flowstate.NewEngine(
 The engine is configured with functional options. Three stores are required; everything else is optional.
 
 ```go
-engine, err := flowstate.NewEngine(
+engine, err := flowstep.NewEngine(
     // Required
-    flowstate.WithEventStore(eventStore),
-    flowstate.WithInstanceStore(instanceStore),
-    flowstate.WithTxProvider(txProvider),
+    flowstep.WithEventStore(eventStore),
+    flowstep.WithInstanceStore(instanceStore),
+    flowstep.WithTxProvider(txProvider),
 
     // Optional — enable features as needed
-    flowstate.WithTaskStore(taskStore),           // for wait states & tasks
-    flowstate.WithChildStore(childStore),         // for child workflows
-    flowstate.WithActivityStore(activityStore),   // for activity tracking
-    flowstate.WithEventBus(eventBus),             // for event publishing
-    flowstate.WithActivityRunner(activityRunner), // for activity dispatch
-    flowstate.WithClock(clock),                   // default: RealClock
-    flowstate.WithHooks(hooks),                   // default: NoopHooks
+    flowstep.WithTaskStore(taskStore),           // for wait states & tasks
+    flowstep.WithChildStore(childStore),         // for child workflows
+    flowstep.WithActivityStore(activityStore),   // for activity tracking
+    flowstep.WithEventBus(eventBus),             // for event publishing
+    flowstep.WithActivityRunner(activityRunner), // for activity dispatch
+    flowstep.WithClock(clock),                   // default: RealClock
+    flowstep.WithHooks(hooks),                   // default: NoopHooks
 )
 ```
 
@@ -410,18 +410,18 @@ engine, err := flowstate.NewEngine(
 ```go
 import (
     "github.com/jackc/pgx/v5/pgxpool"
-    "github.com/mawkeye/flowstate/adapters/pgxstore"
+    "github.com/mawkeye/flowstep/adapters/pgxstore"
 )
 
 pool, _ := pgxpool.New(ctx, "postgres://user:pass@localhost/mydb")
 
-engine, _ := flowstate.NewEngine(
-    flowstate.WithEventStore(pgxstore.NewEventStore(pool)),
-    flowstate.WithInstanceStore(pgxstore.NewInstanceStore(pool, flowstate.ErrInstanceNotFound)),
-    flowstate.WithTaskStore(pgxstore.NewTaskStore(pool, flowstate.ErrTaskNotFound)),
-    flowstate.WithChildStore(pgxstore.NewChildStore(pool)),
-    flowstate.WithActivityStore(pgxstore.NewActivityStore(pool)),
-    flowstate.WithTxProvider(pgxstore.NewTxProvider(pool)),
+engine, _ := flowstep.NewEngine(
+    flowstep.WithEventStore(pgxstore.NewEventStore(pool)),
+    flowstep.WithInstanceStore(pgxstore.NewInstanceStore(pool, flowstep.ErrInstanceNotFound)),
+    flowstep.WithTaskStore(pgxstore.NewTaskStore(pool, flowstep.ErrTaskNotFound)),
+    flowstep.WithChildStore(pgxstore.NewChildStore(pool)),
+    flowstep.WithActivityStore(pgxstore.NewActivityStore(pool)),
+    flowstep.WithTxProvider(pgxstore.NewTxProvider(pool)),
 )
 ```
 
@@ -432,16 +432,16 @@ The `pgxstore` package includes embedded SQL migrations (`pgxstore.Migrations`).
 ```go
 import (
     "github.com/hibiken/asynq"
-    "github.com/mawkeye/flowstate/adapters/asynqrunner"
+    "github.com/mawkeye/flowstep/adapters/asynqrunner"
 )
 
 // Producer side
 client := asynq.NewClient(asynq.RedisClientOpt{Addr: "localhost:6379"})
 runner := asynqrunner.New(client)
 
-engine, _ := flowstate.NewEngine(
+engine, _ := flowstep.NewEngine(
     // ...
-    flowstate.WithActivityRunner(runner),
+    flowstep.WithActivityRunner(runner),
 )
 
 // Worker side
@@ -459,9 +459,9 @@ srv.Run(mux)
 Generate a Mermaid state diagram from any definition:
 
 ```go
-import "github.com/mawkeye/flowstate/types"
+import "github.com/mawkeye/flowstep/types"
 
-def, _ := flowstate.Define("order", "order_workflow").
+def, _ := flowstep.Define("order", "order_workflow").
     // ... states and transitions ...
     Build()
 
@@ -488,7 +488,7 @@ The `testutil` package provides a fully wired in-memory engine, a fake clock, an
 ```go
 import (
     "testing"
-    "github.com/mawkeye/flowstate/testutil"
+    "github.com/mawkeye/flowstep/testutil"
 )
 
 func TestMyWorkflow(t *testing.T) {
@@ -540,16 +540,16 @@ All errors are defined as sentinel values in the root package. Use `errors.Is` f
 result, err := engine.Transition(ctx, "order", "o-1", "complete", "user-1", nil)
 if err != nil {
     switch {
-    case errors.Is(err, flowstate.ErrGuardFailed):
+    case errors.Is(err, flowstep.ErrGuardFailed):
         // Precondition not met — guard failure details are reported via
         // the Hooks.OnGuardFailed callback registered on the engine.
-    case errors.Is(err, flowstate.ErrInvalidTransition):
+    case errors.Is(err, flowstep.ErrInvalidTransition):
         // Transition not valid from the current state
-    case errors.Is(err, flowstate.ErrAlreadyTerminal):
+    case errors.Is(err, flowstep.ErrAlreadyTerminal):
         // Workflow has already reached a terminal state
-    case errors.Is(err, flowstate.ErrConcurrentModification):
+    case errors.Is(err, flowstep.ErrConcurrentModification):
         // Optimistic lock conflict — retry
-    case errors.Is(err, flowstate.ErrInstanceNotFound):
+    case errors.Is(err, flowstep.ErrInstanceNotFound):
         // No workflow instance exists for this aggregate
     }
 }
@@ -603,7 +603,7 @@ go run ./examples/06-parallel-children-signals/
 This project is licensed under the [GNU General Public License v3.0](LICENSE).
 
 ```
-flowstate - A declarative workflow engine for Go
+flowstep - A declarative workflow engine for Go
 Copyright (C) 2026
 
 This program is free software: you can redistribute it and/or modify

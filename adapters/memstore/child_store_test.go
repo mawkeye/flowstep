@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mawkeye/flowstate/types"
+	"github.com/mawkeye/flowstep/types"
 )
 
 func newRelation(id, parentType, parentID, childType, childID string) types.ChildRelation {

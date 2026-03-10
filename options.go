@@ -1,4 +1,4 @@
-package flowstate
+package flowstep
 
 // Option configures the Engine.
 type Option func(*engineConfig)

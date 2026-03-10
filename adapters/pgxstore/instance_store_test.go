@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/mawkeye/flowstate"
-	"github.com/mawkeye/flowstate/adapters/pgxstore"
-	"github.com/mawkeye/flowstate/types"
+	"github.com/mawkeye/flowstep"
+	"github.com/mawkeye/flowstep/adapters/pgxstore"
+	"github.com/mawkeye/flowstep/types"
 )
 
 func TestInstanceStore(t *testing.T) {
@@ -26,11 +26,11 @@ func TestInstanceStore(t *testing.T) {
 	}
 	defer pool.Close()
 
-	if _, err := pool.Exec(ctx, "TRUNCATE flowstate_instances"); err != nil {
+	if _, err := pool.Exec(ctx, "TRUNCATE flowstep_instances"); err != nil {
 		t.Fatalf("failed to truncate instances: %v", err)
 	}
 
-	store := pgxstore.NewInstanceStore(pool, flowstate.ErrInstanceNotFound)
+	store := pgxstore.NewInstanceStore(pool, flowstep.ErrInstanceNotFound)
 	now := time.Now().UTC()
 
 	inst := types.WorkflowInstance{
@@ -86,7 +86,7 @@ func TestInstanceStore(t *testing.T) {
 	staleInst.CurrentState = "STALE_WRITE"
 
 	err = store.Update(ctx, nil, staleInst)
-	if !errors.Is(err, flowstate.ErrConcurrentModification) {
+	if !errors.Is(err, flowstep.ErrConcurrentModification) {
 		t.Errorf("expected ErrConcurrentModification, got %v", err)
 	}
 
@@ -98,7 +98,7 @@ func TestInstanceStore(t *testing.T) {
 
 	// Test Get Not Found
 	_, err = store.Get(ctx, "agg", "non-existent")
-	if !errors.Is(err, flowstate.ErrInstanceNotFound) {
+	if !errors.Is(err, flowstep.ErrInstanceNotFound) {
 		t.Errorf("expected ErrInstanceNotFound, got %v", err)
 	}
 }

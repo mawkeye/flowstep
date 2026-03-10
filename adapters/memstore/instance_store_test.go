@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mawkeye/flowstate"
-	"github.com/mawkeye/flowstate/types"
+	"github.com/mawkeye/flowstep"
+	"github.com/mawkeye/flowstep/types"
 )
 
 func TestInstanceStoreCreateAndGet(t *testing.T) {
@@ -42,7 +42,7 @@ func TestInstanceStoreGetNotFound(t *testing.T) {
 	ctx := context.Background()
 
 	_, err := store.Get(ctx, "order", "nonexistent")
-	if !errors.Is(err, flowstate.ErrInstanceNotFound) {
+	if !errors.Is(err, flowstep.ErrInstanceNotFound) {
 		t.Errorf("expected ErrInstanceNotFound, got %v", err)
 	}
 }
@@ -70,7 +70,7 @@ func TestInstanceStoreOptimisticLocking(t *testing.T) {
 	stale.CurrentState = "PAID"
 	stale.LastReadUpdatedAt = now.Add(-time.Second) // wrong — stored is `now`
 	stale.UpdatedAt = now.Add(time.Second)
-	if err := store.Update(ctx, nil, stale); !errors.Is(err, flowstate.ErrConcurrentModification) {
+	if err := store.Update(ctx, nil, stale); !errors.Is(err, flowstep.ErrConcurrentModification) {
 		t.Errorf("expected ErrConcurrentModification for stale read, got %v", err)
 	}
 

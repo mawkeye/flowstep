@@ -3,15 +3,15 @@ package testutil
 import (
 	"testing"
 
-	"github.com/mawkeye/flowstate"
-	"github.com/mawkeye/flowstate/adapters/chanbus"
-	"github.com/mawkeye/flowstate/adapters/memrunner"
-	"github.com/mawkeye/flowstate/adapters/memstore"
+	"github.com/mawkeye/flowstep"
+	"github.com/mawkeye/flowstep/adapters/chanbus"
+	"github.com/mawkeye/flowstep/adapters/memrunner"
+	"github.com/mawkeye/flowstep/adapters/memstore"
 )
 
-// TestEngine bundles a flowstate.Engine with all in-memory adapters for testing.
+// TestEngine bundles a flowstep.Engine with all in-memory adapters for testing.
 type TestEngine struct {
-	Engine        *flowstate.Engine
+	Engine        *flowstep.Engine
 	EventStore    *memstore.EventStore
 	InstanceStore *memstore.InstanceStore
 	TaskStore     *memstore.TaskStore
@@ -35,16 +35,16 @@ func NewTestEngine(t *testing.T) *TestEngine {
 	bus := chanbus.New()
 	runner := memrunner.New()
 
-	engine, err := flowstate.NewEngine(
-		flowstate.WithEventStore(es),
-		flowstate.WithInstanceStore(is),
-		flowstate.WithTaskStore(ts),
-		flowstate.WithChildStore(cs),
-		flowstate.WithActivityStore(as),
-		flowstate.WithTxProvider(memstore.NewTxProvider()),
-		flowstate.WithEventBus(bus),
-		flowstate.WithActivityRunner(runner),
-		flowstate.WithClock(clock),
+	engine, err := flowstep.NewEngine(
+		flowstep.WithEventStore(es),
+		flowstep.WithInstanceStore(is),
+		flowstep.WithTaskStore(ts),
+		flowstep.WithChildStore(cs),
+		flowstep.WithActivityStore(as),
+		flowstep.WithTxProvider(memstore.NewTxProvider()),
+		flowstep.WithEventBus(bus),
+		flowstep.WithActivityRunner(runner),
+		flowstep.WithClock(clock),
 	)
 	if err != nil {
 		t.Fatalf("testutil: failed to create engine: %v", err)

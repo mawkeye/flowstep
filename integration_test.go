@@ -1,4 +1,4 @@
-package flowstate_test
+package flowstep_test
 
 import (
 	"context"
@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mawkeye/flowstate"
-	"github.com/mawkeye/flowstate/testutil"
-	"github.com/mawkeye/flowstate/types"
+	"github.com/mawkeye/flowstep"
+	"github.com/mawkeye/flowstep/testutil"
+	"github.com/mawkeye/flowstep/types"
 )
 
 // --- Guards for the booking workflow ---
@@ -92,76 +92,76 @@ func buildBookingWorkflow(t *testing.T) *types.Definition {
 	cancelGuard := &cancellationPolicyGuard{cutoff: 2 * time.Hour}
 	trainerGuard := &isProfessionalGuard{}
 
-	def, err := flowstate.Define("booking", "fitness_booking").
+	def, err := flowstep.Define("booking", "fitness_booking").
 		Version(1).
 		States(
-			flowstate.Initial("PENDING_PAYMENT"),
-			flowstate.State("AWAITING_PAYMENT"),
-			flowstate.State("CONFIRMED"),
-			flowstate.State("CHECKED_IN"),
-			flowstate.WaitState("AWAITING_TRAINER_DECISION"),
-			flowstate.State("TRAINER_HOLD"),
-			flowstate.Terminal("CANCELLED"),
-			flowstate.Terminal("NO_SHOW"),
-			flowstate.Terminal("COMPLETED"),
+			flowstep.Initial("PENDING_PAYMENT"),
+			flowstep.State("AWAITING_PAYMENT"),
+			flowstep.State("CONFIRMED"),
+			flowstep.State("CHECKED_IN"),
+			flowstep.WaitState("AWAITING_TRAINER_DECISION"),
+			flowstep.State("TRAINER_HOLD"),
+			flowstep.Terminal("CANCELLED"),
+			flowstep.Terminal("NO_SHOW"),
+			flowstep.Terminal("COMPLETED"),
 		).
 		// Core payment flow
 		Transition("initiate_payment",
-			flowstate.From("PENDING_PAYMENT"),
-			flowstate.To("AWAITING_PAYMENT"),
-			flowstate.Event("PaymentInitiated"),
-			flowstate.DispatchAndWait("process_stripe_charge"),
+			flowstep.From("PENDING_PAYMENT"),
+			flowstep.To("AWAITING_PAYMENT"),
+			flowstep.Event("PaymentInitiated"),
+			flowstep.DispatchAndWait("process_stripe_charge"),
 		).
 		// Payment signals
 		Transition("confirm",
-			flowstate.From("AWAITING_PAYMENT"),
-			flowstate.To("CONFIRMED"),
-			flowstate.Event("BookingConfirmed"),
-			flowstate.OnSignal("payment_succeeded"),
-			flowstate.Dispatch("schedule_lighting"),
-			flowstate.Dispatch("generate_credentials"),
-			flowstate.Dispatch("send_confirmation_email"),
+			flowstep.From("AWAITING_PAYMENT"),
+			flowstep.To("CONFIRMED"),
+			flowstep.Event("BookingConfirmed"),
+			flowstep.OnSignal("payment_succeeded"),
+			flowstep.Dispatch("schedule_lighting"),
+			flowstep.Dispatch("generate_credentials"),
+			flowstep.Dispatch("send_confirmation_email"),
 		).
 		Transition("payment_failed",
-			flowstate.From("AWAITING_PAYMENT"),
-			flowstate.To("CANCELLED"),
-			flowstate.Event("PaymentFailed"),
-			flowstate.OnSignal("payment_failed"),
+			flowstep.From("AWAITING_PAYMENT"),
+			flowstep.To("CANCELLED"),
+			flowstep.Event("PaymentFailed"),
+			flowstep.OnSignal("payment_failed"),
 		).
 		Transition("payment_timed_out",
-			flowstate.From("AWAITING_PAYMENT"),
-			flowstate.To("CANCELLED"),
-			flowstate.Event("PaymentTimedOut"),
-			flowstate.OnSignal("payment_timed_out"),
+			flowstep.From("AWAITING_PAYMENT"),
+			flowstep.To("CANCELLED"),
+			flowstep.Event("PaymentTimedOut"),
+			flowstep.OnSignal("payment_timed_out"),
 		).
 		// Check-in
 		Transition("check_in",
-			flowstate.From("CONFIRMED"),
-			flowstate.To("CHECKED_IN"),
-			flowstate.Event("GuestCheckedIn"),
-			flowstate.Guards(checkInGuard),
-			flowstate.Dispatch("log_attendance"),
+			flowstep.From("CONFIRMED"),
+			flowstep.To("CHECKED_IN"),
+			flowstep.Event("GuestCheckedIn"),
+			flowstep.Guards(checkInGuard),
+			flowstep.Dispatch("log_attendance"),
 		).
 		// Session completion
 		Transition("complete_session",
-			flowstate.From("CHECKED_IN"),
-			flowstate.To("COMPLETED"),
-			flowstate.Event("SessionCompleted"),
+			flowstep.From("CHECKED_IN"),
+			flowstep.To("COMPLETED"),
+			flowstep.Event("SessionCompleted"),
 		).
 		// User cancellation (from multiple states)
 		Transition("cancel_user",
-			flowstate.From("PENDING_PAYMENT", "CONFIRMED"),
-			flowstate.To("CANCELLED"),
-			flowstate.Event("BookingCancelledByUser"),
-			flowstate.Guards(cancelGuard),
+			flowstep.From("PENDING_PAYMENT", "CONFIRMED"),
+			flowstep.To("CANCELLED"),
+			flowstep.Event("BookingCancelledByUser"),
+			flowstep.Guards(cancelGuard),
 		).
 		// Trainer cancellation initiation (creates wait state + task)
 		Transition("trainer_cancel_init",
-			flowstate.From("CONFIRMED"),
-			flowstate.To("AWAITING_TRAINER_DECISION"),
-			flowstate.Event("TrainerCancelInitiated"),
-			flowstate.Guards(trainerGuard),
-			flowstate.EmitTask(types.TaskDef{
+			flowstep.From("CONFIRMED"),
+			flowstep.To("AWAITING_TRAINER_DECISION"),
+			flowstep.Event("TrainerCancelInitiated"),
+			flowstep.Guards(trainerGuard),
+			flowstep.EmitTask(types.TaskDef{
 				Type:        "trainer_release_decision",
 				Description: "Decide whether to release the booking or hold for trainer",
 				Options:     []string{"release_to_public", "hold_for_trainer"},
@@ -170,28 +170,28 @@ func buildBookingWorkflow(t *testing.T) *types.Definition {
 		).
 		// Trainer decision outcomes (task-triggered)
 		Transition("release_to_public",
-			flowstate.From("AWAITING_TRAINER_DECISION"),
-			flowstate.To("CANCELLED"),
-			flowstate.Event("BookingReleasedToPublic"),
-			flowstate.OnTaskCompleted("trainer_release_decision"),
+			flowstep.From("AWAITING_TRAINER_DECISION"),
+			flowstep.To("CANCELLED"),
+			flowstep.Event("BookingReleasedToPublic"),
+			flowstep.OnTaskCompleted("trainer_release_decision"),
 		).
 		Transition("hold_for_trainer",
-			flowstate.From("AWAITING_TRAINER_DECISION"),
-			flowstate.To("TRAINER_HOLD"),
-			flowstate.Event("BookingHeldForTrainer"),
-			flowstate.OnTaskCompleted("trainer_release_decision"),
+			flowstep.From("AWAITING_TRAINER_DECISION"),
+			flowstep.To("TRAINER_HOLD"),
+			flowstep.Event("BookingHeldForTrainer"),
+			flowstep.OnTaskCompleted("trainer_release_decision"),
 		).
 		// Trainer hold completion
 		Transition("trainer_confirm",
-			flowstate.From("TRAINER_HOLD"),
-			flowstate.To("CONFIRMED"),
-			flowstate.Event("TrainerConfirmed"),
+			flowstep.From("TRAINER_HOLD"),
+			flowstep.To("CONFIRMED"),
+			flowstep.Event("TrainerConfirmed"),
 		).
 		// No-show
 		Transition("mark_no_show",
-			flowstate.From("CONFIRMED"),
-			flowstate.To("NO_SHOW"),
-			flowstate.Event("MarkedNoShow"),
+			flowstep.From("CONFIRMED"),
+			flowstep.To("NO_SHOW"),
+			flowstep.Event("MarkedNoShow"),
 		).
 		Build()
 	if err != nil {
@@ -430,7 +430,7 @@ func TestIntegration_BookingCancellationGuardRejects(t *testing.T) {
 		"booking_time": bookingTime,
 		"now":          te.Clock.Now(),
 	})
-	if !errors.Is(err, flowstate.ErrGuardFailed) {
+	if !errors.Is(err, flowstep.ErrGuardFailed) {
 		t.Errorf("expected ErrGuardFailed, got %v", err)
 	}
 
@@ -480,7 +480,7 @@ func TestIntegration_BookingCheckInGuardRejects(t *testing.T) {
 		"booking_time": bookingTime,
 		"now":          bookingTime.Add(-2 * time.Hour),
 	})
-	if !errors.Is(err, flowstate.ErrGuardFailed) {
+	if !errors.Is(err, flowstep.ErrGuardFailed) {
 		t.Errorf("expected ErrGuardFailed for early check-in, got %v", err)
 	}
 
@@ -489,7 +489,7 @@ func TestIntegration_BookingCheckInGuardRejects(t *testing.T) {
 		"booking_time": bookingTime,
 		"now":          bookingTime.Add(5 * time.Minute),
 	})
-	if !errors.Is(err, flowstate.ErrGuardFailed) {
+	if !errors.Is(err, flowstep.ErrGuardFailed) {
 		t.Errorf("expected ErrGuardFailed for late check-in, got %v", err)
 	}
 
@@ -532,7 +532,7 @@ func TestIntegration_BookingTrainerHoldRelease(t *testing.T) {
 	_, err = te.Engine.Transition(ctx, "booking", "b-trainer-1", "trainer_cancel_init", "regular-user", map[string]any{
 		"role": "member",
 	})
-	if !errors.Is(err, flowstate.ErrGuardFailed) {
+	if !errors.Is(err, flowstep.ErrGuardFailed) {
 		t.Errorf("expected ErrGuardFailed for non-trainer, got %v", err)
 	}
 

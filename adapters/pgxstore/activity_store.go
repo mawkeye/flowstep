@@ -9,10 +9,10 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/mawkeye/flowstate/types"
+	"github.com/mawkeye/flowstep/types"
 )
 
-// ActivityStore implements flowstate.ActivityStore using PostgreSQL.
+// ActivityStore implements flowstep.ActivityStore using PostgreSQL.
 type ActivityStore struct {
 	pool        *pgxpool.Pool
 	errNotFound error
@@ -28,7 +28,7 @@ func (s *ActivityStore) Create(ctx context.Context, tx any, inv types.ActivityIn
 	input, _ := json.Marshal(inv.Input)
 	retryPolicy, _ := json.Marshal(inv.RetryPolicy)
 
-	query := `INSERT INTO flowstate_activities
+	query := `INSERT INTO flowstep_activities
 		(id, activity_name, workflow_type, aggregate_type, aggregate_id,
 		 correlation_id, mode, input, retry_policy, timeout, status,
 		 max_attempts, scheduled_at)
@@ -74,7 +74,7 @@ func (s *ActivityStore) Get(ctx context.Context, invocationID string) (*types.Ac
 		       correlation_id, mode, input, output, error_msg, retry_policy,
 		       timeout, status, max_attempts, attempt_count,
 		       scheduled_at, started_at, completed_at
-		FROM flowstate_activities WHERE id = $1`, invocationID,
+		FROM flowstep_activities WHERE id = $1`, invocationID,
 	).Scan(
 		&inv.ID, &inv.ActivityName, &inv.WorkflowType,
 		&inv.AggregateType, &inv.AggregateID, &inv.CorrelationID,
@@ -111,7 +111,7 @@ func (s *ActivityStore) UpdateStatus(ctx context.Context, invocationID, status s
 	}
 
 	_, err := s.pool.Exec(ctx, `
-		UPDATE flowstate_activities
+		UPDATE flowstep_activities
 		SET status = $1, output = $2, error_msg = $3, completed_at = NOW()
 		WHERE id = $4`, status, output, errorMsg, invocationID)
 	if err != nil {
@@ -126,7 +126,7 @@ func (s *ActivityStore) ListByAggregate(ctx context.Context, aggregateType, aggr
 		       correlation_id, mode, input, output, error_msg, retry_policy,
 		       timeout, status, max_attempts, attempt_count,
 		       scheduled_at, started_at, completed_at, next_retry_at
-		FROM flowstate_activities
+		FROM flowstep_activities
 		WHERE aggregate_type = $1 AND aggregate_id = $2
 		ORDER BY scheduled_at`, aggregateType, aggregateID)
 	if err != nil {
@@ -143,7 +143,7 @@ func (s *ActivityStore) ListPending(ctx context.Context) ([]types.ActivityInvoca
 		       correlation_id, mode, input, output, error_msg, retry_policy,
 		       timeout, status, max_attempts, attempt_count,
 		       scheduled_at, started_at, completed_at, next_retry_at
-		FROM flowstate_activities
+		FROM flowstep_activities
 		WHERE status = 'SCHEDULED'
 		ORDER BY scheduled_at`)
 	if err != nil {
@@ -160,7 +160,7 @@ func (s *ActivityStore) ListFailed(ctx context.Context) ([]types.ActivityInvocat
 		       correlation_id, mode, input, output, error_msg, retry_policy,
 		       timeout, status, max_attempts, attempt_count,
 		       scheduled_at, started_at, completed_at, next_retry_at
-		FROM flowstate_activities
+		FROM flowstep_activities
 		WHERE status = 'FAILED'
 		ORDER BY scheduled_at`)
 	if err != nil {
@@ -177,7 +177,7 @@ func (s *ActivityStore) ListRetryable(ctx context.Context) ([]types.ActivityInvo
 		       correlation_id, mode, input, output, error_msg, retry_policy,
 		       timeout, status, max_attempts, attempt_count,
 		       scheduled_at, started_at, completed_at, next_retry_at
-		FROM flowstate_activities
+		FROM flowstep_activities
 		WHERE status = 'SCHEDULED' AND next_retry_at <= NOW()
 		ORDER BY scheduled_at`)
 	if err != nil {

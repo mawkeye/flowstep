@@ -7,14 +7,14 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/mawkeye/flowstate"
-	"github.com/mawkeye/flowstate/types"
+	"github.com/mawkeye/flowstep"
+	"github.com/mawkeye/flowstep/types"
 )
 
 // Runner dispatches activities as goroutines and collects results.
 type Runner struct {
 	mu         sync.RWMutex
-	activities map[string]flowstate.Activity
+	activities map[string]flowstep.Activity
 	wg         sync.WaitGroup
 
 	errMu  sync.Mutex
@@ -24,12 +24,12 @@ type Runner struct {
 // New creates a new goroutine-based ActivityRunner.
 func New() *Runner {
 	return &Runner{
-		activities: make(map[string]flowstate.Activity),
+		activities: make(map[string]flowstep.Activity),
 	}
 }
 
 // Register adds an activity implementation.
-func (r *Runner) Register(activity flowstate.Activity) {
+func (r *Runner) Register(activity flowstep.Activity) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.activities[activity.Name()] = activity

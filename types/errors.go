@@ -3,7 +3,7 @@ package types
 import "errors"
 
 // ErrGuardFailed is the sentinel error returned when a guard check fails.
-// Re-exported as flowstate.ErrGuardFailed in the root package.
+// Re-exported as flowstep.ErrGuardFailed in the root package.
 var ErrGuardFailed = errors.New("guard check failed")
 
 // GuardError wraps a guard failure with the name of the failing guard and
@@ -17,7 +17,7 @@ type GuardError struct {
 
 // Error implements the error interface.
 func (e *GuardError) Error() string {
-	return "flowstate: guard " + e.GuardName + " failed: " + e.Reason.Error()
+	return "flowstep: guard " + e.GuardName + " failed: " + e.Reason.Error()
 }
 
 // Is reports true when target is ErrGuardFailed so that errors.Is works.

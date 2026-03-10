@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mawkeye/flowstate"
-	"github.com/mawkeye/flowstate/types"
+	"github.com/mawkeye/flowstep"
+	"github.com/mawkeye/flowstep/types"
 )
 
 func newTask(id, aggType, aggID, taskType string) types.PendingTask {
@@ -43,7 +43,7 @@ func TestTaskStoreCreateAndGet(t *testing.T) {
 func TestTaskStoreGetNotFound(t *testing.T) {
 	s := NewTaskStore()
 	_, err := s.Get(context.Background(), "nope")
-	if !errors.Is(err, flowstate.ErrTaskNotFound) {
+	if !errors.Is(err, flowstep.ErrTaskNotFound) {
 		t.Errorf("expected ErrTaskNotFound, got %v", err)
 	}
 }
@@ -92,7 +92,7 @@ func TestTaskStoreCompleteAlreadyCompleted(t *testing.T) {
 	_ = s.Complete(ctx, nil, "t-1", "approve", "user-1")
 
 	err := s.Complete(ctx, nil, "t-1", "approve", "user-1")
-	if !errors.Is(err, flowstate.ErrTaskAlreadyCompleted) {
+	if !errors.Is(err, flowstep.ErrTaskAlreadyCompleted) {
 		t.Errorf("expected ErrTaskAlreadyCompleted, got %v", err)
 	}
 }

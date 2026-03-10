@@ -1,4 +1,4 @@
-module github.com/mawkeye/flowstate
+module github.com/mawkeye/flowstep
 
 go 1.25.3
 

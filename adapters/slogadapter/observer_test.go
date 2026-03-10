@@ -43,7 +43,12 @@ func assertField(t *testing.T, record map[string]any, key string, want any) {
 	// JSON numbers decode as float64
 	switch wantTyped := want.(type) {
 	case int64:
-		if int64(got.(float64)) != wantTyped {
+		gotF, ok := got.(float64)
+		if !ok {
+			t.Errorf("field %q: want int64, got non-numeric %T", key, got)
+			return
+		}
+		if int64(gotF) != wantTyped {
 			t.Errorf("field %q: want %v, got %v", key, want, got)
 		}
 	default:

@@ -5,6 +5,15 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [v0.5.0] - 2026-03-10
+
+### Added
+- Task 16: `engine.SideEffect(ctx, aggregateType, aggregateID, name string, fn func() (any, error)) (any, error)` — execute-once-persist-result pattern for non-deterministic operations (UUID generation, timestamps, random numbers). Runs `fn`, persists the result as a `SideEffect` DomainEvent to the EventStore, and returns the result. Enables replay-safe workflows (Task 9 will short-circuit re-execution using the stored event).
+- `types.EventTypeSideEffect` and `types.EventTypeActivityOutcome` constants for event type identification
+- `types.NewSideEffectEvent`, `types.ParseSideEffect` — helper functions for building and reading SideEffect DomainEvents
+- `types.NewActivityOutcomeEvent`, `types.ParseActivityOutcome` — helper functions for activity outcome recording (ActivityID, ActivityName, Result, TransitionPath); used by the scheduler when OnSuccess/OnFailure transitions are wired (future task)
+- Payload key constants (`PayloadKeySideEffectName`, `PayloadKeySideEffectResult`, `PayloadKeyActivityID`, `PayloadKeyActivityName`, `PayloadKeyActivityResult`, `PayloadKeyTransitionPath`)
+
 ## [v0.4.2] - 2026-03-10
 
 ### Changed

@@ -42,6 +42,7 @@ The package requires a minimum version of Go 1.25.
 - **Wait states & tasks** — human-in-the-loop decisions with timeouts
 - **Child workflows** — single or parallel fan-out with join policies (ALL/ANY/N)
 - **Activities** — async side-effects (fire-and-forget or await-result)
+- **Deterministic side effects** — `engine.SideEffect()` executes a function once and persists its result as an event, enabling replay-safe UUID/timestamp/random generation
 - **Immutable event chain** — every transition appends a domain event
 - **Version coexistence** — multiple workflow versions run side by side
 - **Observability hooks** — instrument transitions, guard failures, activity lifecycle

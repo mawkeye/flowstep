@@ -887,6 +887,77 @@ func TestIntegration_BookingMultipleConcurrentWorkflows(t *testing.T) {
 	testutil.AssertState(t, te, "booking", "b-m4", "CANCELLED")
 }
 
+// TestSideEffect_publicAPI verifies the public engine.SideEffect() method end-to-end
+// using in-memory adapters. Checks that:
+//   - fn result is returned
+//   - A SideEffect DomainEvent is persisted to the EventStore with correct fields
+func TestSideEffect_publicAPI(t *testing.T) {
+	te := testutil.NewTestEngine(t)
+
+	// First, create a workflow instance so SideEffect can find the aggregate.
+	def, err := flowstep.Define("booking", "bookingWorkflow").
+		States(
+			flowstep.Initial("PENDING"),
+			flowstep.Terminal("CONFIRMED"),
+		).
+		Transition("confirm",
+			flowstep.From("PENDING"),
+			flowstep.To("CONFIRMED"),
+			flowstep.Event("Confirmed"),
+		).
+		Build()
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if err := te.Engine.Register(def); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	// Trigger a transition to create the instance.
+	if _, err := te.Engine.Transition(context.Background(), "booking", "b-se-1", "confirm", "actor", nil); err != nil {
+		t.Fatalf("Transition: %v", err)
+	}
+
+	// Invoke SideEffect and verify the return value.
+	result, err := te.Engine.SideEffect(context.Background(), "booking", "b-se-1", "GenerateReceiptID", func() (any, error) {
+		return "receipt-uuid-abc", nil
+	})
+	if err != nil {
+		t.Fatalf("SideEffect: %v", err)
+	}
+	if result != "receipt-uuid-abc" {
+		t.Errorf("SideEffect result = %v, want %q", result, "receipt-uuid-abc")
+	}
+
+	// Verify a SideEffect event was persisted to the EventStore.
+	events, err := te.EventStore.ListByAggregate(context.Background(), "booking", "b-se-1")
+	if err != nil {
+		t.Fatalf("ListByAggregate: %v", err)
+	}
+	var sideEffectEvent *types.DomainEvent
+	for i := range events {
+		if events[i].EventType == types.EventTypeSideEffect {
+			sideEffectEvent = &events[i]
+			break
+		}
+	}
+	if sideEffectEvent == nil {
+		t.Fatal("no SideEffect event found in EventStore")
+	}
+	name, stored, ok := types.ParseSideEffect(*sideEffectEvent)
+	if !ok {
+		t.Fatal("ParseSideEffect returned ok=false")
+	}
+	if name != "GenerateReceiptID" {
+		t.Errorf("name = %q, want %q", name, "GenerateReceiptID")
+	}
+	if stored != "receipt-uuid-abc" {
+		t.Errorf("stored result = %v, want %q", stored, "receipt-uuid-abc")
+	}
+	if sideEffectEvent.WorkflowType != "bookingWorkflow" {
+		t.Errorf("WorkflowType = %q, want %q", sideEffectEvent.WorkflowType, "bookingWorkflow")
+	}
+}
+
 // Interface compliance checks for integration test guards.
 var (
 	_ types.Guard = (*withinTimeWindowGuard)(nil)

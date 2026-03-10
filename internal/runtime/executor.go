@@ -9,6 +9,62 @@ import (
 	"github.com/mawkeye/flowstep/types"
 )
 
+// SideEffect executes fn exactly once and persists its result as a SideEffectEvent.
+// On the first call, fn runs and the result is stored to EventStore within a transaction.
+// This enables future replay (Task 9) to return the stored result without re-executing fn.
+//
+// At-least-once semantic: fn executes before the transaction commits. If Commit fails
+// after fn has already run, fn may have had observable side effects. Design fn to be
+// idempotent or accept at-least-once execution. Task 9 will upgrade this to exactly-once
+// by checking for an existing SideEffectEvent before calling fn.
+//
+// Not safe to call from guards or hooks (they run inside a transition transaction).
+// For use in activity implementations or external orchestration code.
+func (e *Engine) SideEffect(ctx context.Context, aggregateType, aggregateID, name string, fn func() (any, error)) (any, error) {
+	if err := e.checkShutdown(); err != nil {
+		return nil, err
+	}
+	e.wg.Add(1)
+	defer e.wg.Done()
+
+	// Verify aggregate exists before executing fn — prevents leaking side effects
+	// for non-existent aggregates. Use InstanceStore.Get directly (not loadInstanceAndDef)
+	// to avoid auto-creating an instance.
+	instance, err := e.deps.InstanceStore.Get(ctx, aggregateType, aggregateID)
+	if err != nil {
+		return nil, fmt.Errorf("flowstep: SideEffect get instance: %w", err)
+	}
+
+	// Execute fn after confirming the aggregate exists.
+	result, err := fn()
+	if err != nil {
+		return nil, err
+	}
+
+	event := types.NewSideEffectEvent(
+		generateID(),
+		aggregateType, aggregateID,
+		instance.WorkflowType, instance.WorkflowVersion,
+		instance.CorrelationID,
+		name, result,
+		e.deps.Clock.Now(),
+	)
+
+	tx, err := e.deps.TxProvider.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("flowstep: SideEffect begin tx: %w", err)
+	}
+	if err := e.deps.EventStore.Append(ctx, tx, event); err != nil {
+		_ = e.deps.TxProvider.Rollback(ctx, tx)
+		return nil, fmt.Errorf("flowstep: SideEffect append event: %w", err)
+	}
+	if err := e.deps.TxProvider.Commit(ctx, tx); err != nil {
+		return nil, fmt.Errorf("flowstep: SideEffect commit tx: %w", err)
+	}
+
+	return result, nil
+}
+
 // Transition executes a named transition for the given aggregate.
 func (e *Engine) Transition(
 	ctx context.Context,

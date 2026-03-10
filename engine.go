@@ -103,6 +103,19 @@ func (e *Engine) ForceState(ctx context.Context, aggregateType, aggregateID, tar
 	return e.inner.ForceState(ctx, aggregateType, aggregateID, targetState, actorID, reason)
 }
 
+// SideEffect executes fn exactly once and persists its result as a SideEffectEvent.
+// On the first call, fn runs and the result is stored to the EventStore. Future replay
+// (Task 9) will return the stored result without re-executing fn.
+//
+// At-least-once semantic: fn executes before the transaction commits. If Commit fails
+// after fn has already run, fn may have had observable side effects. Design fn to be
+// idempotent or accept at-least-once execution.
+//
+// Not safe to call from guards or hooks (they run inside a transition transaction).
+func (e *Engine) SideEffect(ctx context.Context, aggregateType, aggregateID, name string, fn func() (any, error)) (any, error) {
+	return e.inner.SideEffect(ctx, aggregateType, aggregateID, name, fn)
+}
+
 // Shutdown gracefully stops the engine. Waits for in-flight operations to complete.
 func (e *Engine) Shutdown(ctx context.Context) error {
 	return e.inner.Shutdown(ctx)

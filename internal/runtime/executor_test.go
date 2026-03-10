@@ -36,7 +36,6 @@ func newSideEffectEngine(is types.InstanceStore, es types.EventStore, tx types.T
 		InstanceStore:       is,
 		TxProvider:          tx,
 		Clock:               &fixedClock{},
-		Hooks:               &noopHooks{},
 		ErrInstanceNotFound: errInstanceNotFound,
 		ErrEngineShutdown:   errEngineShutdown,
 	})

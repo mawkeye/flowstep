@@ -58,31 +58,19 @@ func (m *memInstanceStore) ListStuck(_ context.Context) ([]types.WorkflowInstanc
 	return nil, nil
 }
 
-type noopHooks struct{}
-
-func (n *noopHooks) OnTransition(_ context.Context, _ types.TransitionResult, _ time.Duration) {}
-func (n *noopHooks) OnGuardFailed(_ context.Context, _, _, _ string, _ error)                  {}
-func (n *noopHooks) OnActivityDispatched(_ context.Context, _ types.ActivityInvocation)        {}
-func (n *noopHooks) OnActivityCompleted(_ context.Context, _ types.ActivityInvocation, _ *types.ActivityResult) {
-}
-func (n *noopHooks) OnActivityFailed(_ context.Context, _ types.ActivityInvocation, _ error) {}
-func (n *noopHooks) OnStuck(_ context.Context, _ types.WorkflowInstance, _ string)           {}
-func (n *noopHooks) OnPostCommitError(_ context.Context, _ string, _ error)                  {}
-
-// capturingHooks records OnGuardFailed calls for assertion in tests.
-type capturingHooks struct {
-	noopHooks
+// capturingGuardObserver records OnGuardFailed calls for assertion in tests.
+type capturingGuardObserver struct {
 	guardFailedWorkflow   string
 	guardFailedTransition string
 	guardFailedGuardName  string
 	guardFailedErr        error
 }
 
-func (c *capturingHooks) OnGuardFailed(_ context.Context, workflowType, transitionName, guardName string, err error) {
-	c.guardFailedWorkflow = workflowType
-	c.guardFailedTransition = transitionName
-	c.guardFailedGuardName = guardName
-	c.guardFailedErr = err
+func (c *capturingGuardObserver) OnGuardFailed(_ context.Context, e types.GuardFailureEvent) {
+	c.guardFailedWorkflow = e.WorkflowType
+	c.guardFailedTransition = e.TransitionName
+	c.guardFailedGuardName = e.GuardName
+	c.guardFailedErr = e.Err
 }
 
 type fixedClock struct{ t time.Time }
@@ -108,7 +96,6 @@ func newTestEngine(is types.InstanceStore) *Engine {
 		InstanceStore:        is,
 		TxProvider:           &noopTx{},
 		Clock:                &fixedClock{t: time.Now()},
-		Hooks:                &noopHooks{},
 		ErrInstanceNotFound:  errInstanceNotFound,
 		ErrInvalidTransition: errInvalidTransition,
 		ErrAlreadyTerminal:   errAlreadyTerminal,

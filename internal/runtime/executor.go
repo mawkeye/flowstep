@@ -337,7 +337,7 @@ func (e *Engine) ForceState(ctx context.Context, aggregateType, aggregateID, tar
 	if e.deps.EventBus != nil {
 		if emitErr := e.deps.EventBus.Emit(ctx, event); emitErr != nil {
 			forceWarnings = append(forceWarnings, types.PostCommitWarning{Operation: "EventBus.Emit", Err: emitErr})
-			e.deps.Hooks.OnPostCommitError(ctx, "EventBus.Emit", emitErr)
+			e.deps.Observers.NotifyPostCommitError(ctx, types.PostCommitErrorEvent{Operation: "EventBus.Emit", Err: emitErr})
 		}
 	}
 

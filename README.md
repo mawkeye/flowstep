@@ -375,7 +375,7 @@ engine, err := flowstep.NewEngine(
     flowstep.WithEventBus(eventBus),             // for event publishing
     flowstep.WithActivityRunner(activityRunner), // for activity dispatch
     flowstep.WithClock(clock),                   // default: RealClock
-    flowstep.WithHooks(hooks),                   // default: NoopHooks
+    flowstep.WithObservers(observer),            // register observer adapters (optional)
 )
 ```
 
@@ -543,7 +543,7 @@ if err != nil {
     switch {
     case errors.Is(err, flowstep.ErrGuardFailed):
         // Precondition not met — guard failure details are reported via
-        // the Hooks.OnGuardFailed callback registered on the engine.
+        // GuardObserver.OnGuardFailed notification is delivered to registered observers.
     case errors.Is(err, flowstep.ErrInvalidTransition):
         // Transition not valid from the current state
     case errors.Is(err, flowstep.ErrAlreadyTerminal):

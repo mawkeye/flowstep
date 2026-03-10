@@ -28,7 +28,7 @@ func (e *Engine) runPostCommit(
 	if e.deps.EventBus != nil {
 		if emitErr := e.deps.EventBus.Emit(ctx, event); emitErr != nil {
 			warnings = append(warnings, types.PostCommitWarning{Operation: "EventBus.Emit", Err: emitErr})
-			e.deps.Hooks.OnPostCommitError(ctx, "EventBus.Emit", emitErr)
+			e.deps.Observers.NotifyPostCommitError(ctx, types.PostCommitErrorEvent{Operation: "EventBus.Emit", Err: emitErr})
 		}
 	}
 
@@ -64,15 +64,15 @@ func (e *Engine) runPostCommit(
 			if e.deps.ActivityStore != nil {
 				if createErr := e.deps.ActivityStore.Create(ctx, nil, invocation); createErr != nil {
 					warnings = append(warnings, types.PostCommitWarning{Operation: "ActivityStore.Create", Err: createErr})
-					e.deps.Hooks.OnPostCommitError(ctx, "ActivityStore.Create", createErr)
+					e.deps.Observers.NotifyPostCommitError(ctx, types.PostCommitErrorEvent{Operation: "ActivityStore.Create", Err: createErr})
 				}
 			}
 			if dispatchErr := e.deps.ActivityRunner.Dispatch(ctx, invocation); dispatchErr != nil {
 				warnings = append(warnings, types.PostCommitWarning{Operation: "ActivityRunner.Dispatch", Err: dispatchErr})
-				e.deps.Hooks.OnPostCommitError(ctx, "ActivityRunner.Dispatch", dispatchErr)
+				e.deps.Observers.NotifyPostCommitError(ctx, types.PostCommitErrorEvent{Operation: "ActivityRunner.Dispatch", Err: dispatchErr})
 			} else {
 				activitiesDispatched = append(activitiesDispatched, actDef.Name)
-				e.deps.Hooks.OnActivityDispatched(ctx, invocation)
+				e.deps.Observers.NotifyActivityDispatched(ctx, types.ActivityDispatchedEvent{Invocation: invocation})
 			}
 		}
 	}
@@ -98,7 +98,7 @@ func (e *Engine) runPostCommit(
 		}
 		if createErr := e.deps.TaskStore.Create(ctx, nil, task); createErr != nil {
 			warnings = append(warnings, types.PostCommitWarning{Operation: "TaskStore.Create", Err: createErr})
-			e.deps.Hooks.OnPostCommitError(ctx, "TaskStore.Create", createErr)
+			e.deps.Observers.NotifyPostCommitError(ctx, types.PostCommitErrorEvent{Operation: "TaskStore.Create", Err: createErr})
 		} else {
 			taskCreated = &task
 		}
@@ -122,7 +122,7 @@ func (e *Engine) runPostCommit(
 		}
 		if createErr := e.deps.ChildStore.Create(ctx, nil, relation); createErr != nil {
 			warnings = append(warnings, types.PostCommitWarning{Operation: "ChildStore.Create", Err: createErr})
-			e.deps.Hooks.OnPostCommitError(ctx, "ChildStore.Create", createErr)
+			e.deps.Observers.NotifyPostCommitError(ctx, types.PostCommitErrorEvent{Operation: "ChildStore.Create", Err: createErr})
 		} else {
 			childrenSpawned = append(childrenSpawned, relation)
 		}
@@ -148,7 +148,7 @@ func (e *Engine) runPostCommit(
 			}
 			if createErr := e.deps.ChildStore.Create(ctx, nil, relation); createErr != nil {
 				warnings = append(warnings, types.PostCommitWarning{Operation: "ChildStore.Create", Err: createErr})
-				e.deps.Hooks.OnPostCommitError(ctx, "ChildStore.Create", createErr)
+				e.deps.Observers.NotifyPostCommitError(ctx, types.PostCommitErrorEvent{Operation: "ChildStore.Create", Err: createErr})
 			} else {
 				childrenSpawned = append(childrenSpawned, relation)
 			}
@@ -175,7 +175,7 @@ func (e *Engine) runPostCommit(
 
 	// 6. Hook
 	duration := e.deps.Clock.Now().Sub(start)
-	e.deps.Hooks.OnTransition(ctx, *result, duration)
+	e.deps.Observers.NotifyTransition(ctx, types.TransitionEvent{Result: *result, Duration: duration})
 
 	return result, nil
 }

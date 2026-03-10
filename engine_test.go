@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/mawkeye/flowstep"
 	"github.com/mawkeye/flowstep/adapters/chanbus"
@@ -30,7 +29,6 @@ func newTestHarness(t *testing.T) *testHarness {
 		flowstep.WithTxProvider(memstore.NewTxProvider()),
 		flowstep.WithEventBus(chanbus.New()),
 		flowstep.WithClock(flowstep.RealClock{}),
-		flowstep.WithHooks(flowstep.NoopHooks{}),
 	)
 	if err != nil {
 		t.Fatalf("failed to create engine: %v", err)
@@ -343,7 +341,6 @@ func newTestHarnessWithActivities(t *testing.T, activities ...flowstep.Activity)
 		flowstep.WithActivityStore(as),
 		flowstep.WithActivityRunner(runner),
 		flowstep.WithClock(flowstep.RealClock{}),
-		flowstep.WithHooks(flowstep.NoopHooks{}),
 	)
 	if err != nil {
 		t.Fatalf("failed to create engine: %v", err)
@@ -572,7 +569,6 @@ func newTestHarnessWithTasks(t *testing.T) (*testHarness, *memstore.TaskStore) {
 		flowstep.WithTxProvider(memstore.NewTxProvider()),
 		flowstep.WithEventBus(chanbus.New()),
 		flowstep.WithClock(flowstep.RealClock{}),
-		flowstep.WithHooks(flowstep.NoopHooks{}),
 	)
 	if err != nil {
 		t.Fatalf("failed to create engine: %v", err)
@@ -824,7 +820,6 @@ func newFullTestHarness(t *testing.T) (*testHarness, *memstore.ChildStore) {
 		flowstep.WithTxProvider(memstore.NewTxProvider()),
 		flowstep.WithEventBus(chanbus.New()),
 		flowstep.WithClock(flowstep.RealClock{}),
-		flowstep.WithHooks(flowstep.NoopHooks{}),
 	)
 	if err != nil {
 		t.Fatalf("failed to create engine: %v", err)
@@ -1155,29 +1150,27 @@ func TestEngineVersionCoexistence(t *testing.T) {
 	}
 }
 
-// recordingHooks captures hook calls for test assertions.
-type recordingHooks struct {
+// recordingObserver captures observer calls for test assertions.
+type recordingObserver struct {
 	transitions []types.TransitionResult
 	guardFails  []string
 	activities  []string
 }
 
-func (h *recordingHooks) OnTransition(_ context.Context, result types.TransitionResult, _ time.Duration) {
-	h.transitions = append(h.transitions, result)
+func (h *recordingObserver) OnTransition(_ context.Context, e types.TransitionEvent) {
+	h.transitions = append(h.transitions, e.Result)
 }
-func (h *recordingHooks) OnGuardFailed(_ context.Context, _, transitionName, guardName string, _ error) {
-	h.guardFails = append(h.guardFails, transitionName+":"+guardName)
+func (h *recordingObserver) OnGuardFailed(_ context.Context, e types.GuardFailureEvent) {
+	h.guardFails = append(h.guardFails, e.TransitionName+":"+e.GuardName)
 }
-func (h *recordingHooks) OnActivityDispatched(_ context.Context, inv types.ActivityInvocation) {
-	h.activities = append(h.activities, inv.ActivityName)
+func (h *recordingObserver) OnActivityDispatched(_ context.Context, e types.ActivityDispatchedEvent) {
+	h.activities = append(h.activities, e.Invocation.ActivityName)
 }
-func (h *recordingHooks) OnActivityCompleted(context.Context, types.ActivityInvocation, *types.ActivityResult) {}
-func (h *recordingHooks) OnActivityFailed(context.Context, types.ActivityInvocation, error)                    {}
-func (h *recordingHooks) OnStuck(context.Context, types.WorkflowInstance, string)                              {}
-func (h *recordingHooks) OnPostCommitError(context.Context, string, error)                                     {}
+func (h *recordingObserver) OnActivityCompleted(_ context.Context, _ types.ActivityCompletedEvent)   {}
+func (h *recordingObserver) OnActivityFailed(_ context.Context, _ types.ActivityFailedEvent)         {}
 
 func TestEngineHooksCalledOnTransition(t *testing.T) {
-	hooks := &recordingHooks{}
+	hooks := &recordingObserver{}
 	es := memstore.NewEventStore()
 	is := memstore.NewInstanceStore()
 	engine, err := flowstep.NewEngine(
@@ -1185,7 +1178,7 @@ func TestEngineHooksCalledOnTransition(t *testing.T) {
 		flowstep.WithInstanceStore(is),
 		flowstep.WithTxProvider(memstore.NewTxProvider()),
 		flowstep.WithEventBus(chanbus.New()),
-		flowstep.WithHooks(hooks),
+		flowstep.WithObservers(hooks),
 	)
 	if err != nil {
 		t.Fatalf("failed to create engine: %v", err)
@@ -1222,14 +1215,14 @@ func TestEngineHooksCalledOnTransition(t *testing.T) {
 }
 
 func TestEngineHooksCalledOnGuardFailed(t *testing.T) {
-	hooks := &recordingHooks{}
+	hooks := &recordingObserver{}
 	es := memstore.NewEventStore()
 	is := memstore.NewInstanceStore()
 	engine, err := flowstep.NewEngine(
 		flowstep.WithEventStore(es),
 		flowstep.WithInstanceStore(is),
 		flowstep.WithTxProvider(memstore.NewTxProvider()),
-		flowstep.WithHooks(hooks),
+		flowstep.WithObservers(hooks),
 	)
 	if err != nil {
 		t.Fatalf("failed to create engine: %v", err)
@@ -1264,7 +1257,7 @@ func TestEngineHooksCalledOnGuardFailed(t *testing.T) {
 }
 
 func TestEngineHooksCalledOnActivityDispatched(t *testing.T) {
-	hooks := &recordingHooks{}
+	hooks := &recordingObserver{}
 	es := memstore.NewEventStore()
 	is := memstore.NewInstanceStore()
 	act := &recordingActivity{name: "send_email"}
@@ -1276,7 +1269,7 @@ func TestEngineHooksCalledOnActivityDispatched(t *testing.T) {
 		flowstep.WithTxProvider(memstore.NewTxProvider()),
 		flowstep.WithActivityRunner(runner),
 		flowstep.WithActivityStore(memstore.NewActivityStore()),
-		flowstep.WithHooks(hooks),
+		flowstep.WithObservers(hooks),
 	)
 	if err != nil {
 		t.Fatalf("failed to create engine: %v", err)
@@ -1591,14 +1584,14 @@ type failingEventBus struct{ err error }
 
 func (b *failingEventBus) Emit(_ context.Context, _ types.DomainEvent) error { return b.err }
 
-// captureHooks records OnPostCommitError calls.
-type captureHooks struct {
-	flowstep.NoopHooks
+// captureInfraObserver records OnPostCommitError calls.
+type captureInfraObserver struct {
 	postCommitErrors []flowstep.PostCommitWarning
 }
 
-func (h *captureHooks) OnPostCommitError(_ context.Context, operation string, err error) {
-	h.postCommitErrors = append(h.postCommitErrors, flowstep.PostCommitWarning{Operation: operation, Err: err})
+func (h *captureInfraObserver) OnStuck(_ context.Context, _ types.StuckEvent)                              {}
+func (h *captureInfraObserver) OnPostCommitError(_ context.Context, e types.PostCommitErrorEvent) {
+	h.postCommitErrors = append(h.postCommitErrors, flowstep.PostCommitWarning{Operation: e.Operation, Err: e.Err})
 }
 
 func TestEngineOnPostCommitErrorHookFires(t *testing.T) {
@@ -1615,7 +1608,7 @@ func TestEngineOnPostCommitErrorHookFires(t *testing.T) {
 	}
 
 	busErr := fmt.Errorf("bus unavailable")
-	hooks := &captureHooks{}
+	hooks := &captureInfraObserver{}
 	es := memstore.NewEventStore()
 	is := memstore.NewInstanceStore()
 	engine, err := flowstep.NewEngine(
@@ -1624,7 +1617,7 @@ func TestEngineOnPostCommitErrorHookFires(t *testing.T) {
 		flowstep.WithTxProvider(memstore.NewTxProvider()),
 		flowstep.WithEventBus(&failingEventBus{err: busErr}),
 		flowstep.WithClock(flowstep.RealClock{}),
-		flowstep.WithHooks(hooks),
+		flowstep.WithObservers(hooks),
 	)
 	if err != nil {
 		t.Fatalf("create engine: %v", err)

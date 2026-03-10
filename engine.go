@@ -24,9 +24,6 @@ func NewEngine(opts ...Option) (*Engine, error) {
 	if cfg.clock == nil {
 		cfg.clock = RealClock{}
 	}
-	if cfg.hooks == nil {
-		cfg.hooks = NoopHooks{}
-	}
 
 	// Validate required dependencies
 	if cfg.eventStore == nil {
@@ -48,8 +45,8 @@ func NewEngine(opts ...Option) (*Engine, error) {
 		TxProvider:     cfg.txProvider,
 		EventBus:       cfg.eventBus,
 		ActivityRunner: cfg.activityRunner,
-		Clock:          cfg.clock,
-		Hooks:          cfg.hooks,
+		Clock:     cfg.clock,
+		Observers: internalruntime.NewObserverRegistry(cfg.observers),
 
 		ErrInstanceNotFound:  ErrInstanceNotFound,
 		ErrInvalidTransition: ErrInvalidTransition,

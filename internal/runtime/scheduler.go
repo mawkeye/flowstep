@@ -163,7 +163,7 @@ func (e *Engine) ChildCompleted(ctx context.Context, childAggregateType, childAg
 
 	// Mark child as completed
 	if completeErr := e.deps.ChildStore.Complete(ctx, nil, childAggregateType, childAggregateID, terminalState); completeErr != nil {
-		e.deps.Hooks.OnPostCommitError(ctx, "ChildStore.Complete", completeErr)
+		e.deps.Observers.NotifyPostCommitError(ctx, types.PostCommitErrorEvent{Operation: "ChildStore.Complete", Err: completeErr})
 	}
 
 	// Load parent instance

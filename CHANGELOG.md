@@ -5,6 +5,19 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [v0.6.0] - 2026-03-10
+
+### Added
+- Task 7: `WithObservers(o ...Observer) Option` — register one or more typed observer adapters with the engine. Replaces `WithHooks`.
+- `TransitionObserver`, `GuardObserver`, `ActivityObserver`, `InfrastructureObserver` — four focused observer interfaces. Adapters implement only the interfaces they need.
+- Structured event structs: `TransitionEvent`, `GuardFailureEvent`, `ActivityDispatchedEvent`, `ActivityCompletedEvent`, `ActivityFailedEvent`, `StuckEvent`, `PostCommitErrorEvent` — all re-exported from the root package for adapter implementors.
+- Empty observer registry (no observers registered) is a safe no-op — equivalent to the previous `NoopHooks` default.
+
+### Removed
+- `Hooks` interface (7-method monolithic contract) — replaced by the four focused observer interfaces above.
+- `NoopHooks` struct — no longer needed; an empty observer registry produces the same no-op behavior.
+- `WithHooks(h Hooks) Option` — replaced by `WithObservers(o ...Observer)`.
+
 ## [v0.5.0] - 2026-03-10
 
 ### Added

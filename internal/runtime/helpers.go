@@ -36,7 +36,7 @@ func (e *Engine) runGuards(ctx context.Context, workflowType string, tr types.Tr
 	for _, guard := range tr.Guards {
 		if err := guard.Check(ctx, aggregate, params); err != nil {
 			guardName := fmt.Sprintf("%T", guard)
-			e.deps.Hooks.OnGuardFailed(ctx, workflowType, tr.Name, guardName, err)
+			e.deps.Observers.NotifyGuardFailed(ctx, types.GuardFailureEvent{WorkflowType: workflowType, TransitionName: tr.Name, GuardName: guardName, Err: err})
 			return &types.GuardError{GuardName: guardName, Reason: err}
 		}
 	}

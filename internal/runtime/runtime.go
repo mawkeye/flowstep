@@ -21,7 +21,7 @@ type Deps struct {
 	EventBus       types.EventBus
 	ActivityRunner types.ActivityRunner
 	Clock          types.Clock
-	Hooks          types.Hooks
+	Observers      *ObserverRegistry
 
 	// Sentinel errors from root package
 	ErrInstanceNotFound  error

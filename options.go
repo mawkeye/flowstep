@@ -1,19 +1,21 @@
 package flowstep
 
+import "github.com/mawkeye/flowstep/types"
+
 // Option configures the Engine.
 type Option func(*engineConfig)
 
 type engineConfig struct {
-	eventStore    EventStore
-	instanceStore InstanceStore
-	taskStore     TaskStore
-	childStore    ChildStore
-	activityStore ActivityStore
-	txProvider    TxProvider
-	eventBus      EventBus
+	eventStore     EventStore
+	instanceStore  InstanceStore
+	taskStore      TaskStore
+	childStore     ChildStore
+	activityStore  ActivityStore
+	txProvider     TxProvider
+	eventBus       EventBus
 	activityRunner ActivityRunner
-	clock         Clock
-	hooks         Hooks
+	clock          Clock
+	observers      []types.Observer
 }
 
 // WithEventStore sets the event store.
@@ -61,7 +63,9 @@ func WithClock(c Clock) Option {
 	return func(cfg *engineConfig) { cfg.clock = c }
 }
 
-// WithHooks sets the hooks.
-func WithHooks(h Hooks) Option {
-	return func(c *engineConfig) { c.hooks = h }
+// WithObservers registers one or more observers with the engine.
+// An observer may implement any combination of TransitionObserver, GuardObserver,
+// ActivityObserver, and InfrastructureObserver.
+func WithObservers(o ...Observer) Option {
+	return func(c *engineConfig) { c.observers = append(c.observers, o...) }
 }

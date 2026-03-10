@@ -45,7 +45,6 @@ func buildEngineWithChildStore(cs types.ChildStore) *Engine {
 		InstanceStore:        newMemInstanceStore(errInstanceNotFound),
 		TxProvider:           &noopTx{},
 		Clock:                &fixedClock{t: time.Now()},
-		Hooks:                &noopHooks{},
 		ChildStore:           cs,
 		ErrInstanceNotFound:  errInstanceNotFound,
 		ErrInvalidTransition: errInvalidTransition,

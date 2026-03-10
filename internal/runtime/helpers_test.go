@@ -87,13 +87,13 @@ func TestRunGuards_allPass(t *testing.T) {
 }
 
 func TestRunGuards_firstFailureReturnsErrGuardFailed(t *testing.T) {
-	hooks := &capturingHooks{}
+	obs := &capturingGuardObserver{}
 	e := New(Deps{
 		EventStore:           &noopEventStore{},
 		InstanceStore:        newMemInstanceStore(errInstanceNotFound),
 		TxProvider:           &noopTx{},
 		Clock:                &fixedClock{t: time.Now()},
-		Hooks:                hooks,
+		Observers:            NewObserverRegistry([]types.Observer{obs}),
 		ErrInstanceNotFound:  errInstanceNotFound,
 		ErrInvalidTransition: errInvalidTransition,
 		ErrAlreadyTerminal:   errAlreadyTerminal,
@@ -109,13 +109,13 @@ func TestRunGuards_firstFailureReturnsErrGuardFailed(t *testing.T) {
 	if !errors.Is(err, types.ErrGuardFailed) {
 		t.Errorf("expected types.ErrGuardFailed, got %v", err)
 	}
-	if hooks.guardFailedWorkflow != "my-workflow" {
-		t.Errorf("expected OnGuardFailed called with workflow=my-workflow, got %q", hooks.guardFailedWorkflow)
+	if obs.guardFailedWorkflow != "my-workflow" {
+		t.Errorf("expected OnGuardFailed called with workflow=my-workflow, got %q", obs.guardFailedWorkflow)
 	}
-	if hooks.guardFailedTransition != "go" {
-		t.Errorf("expected OnGuardFailed called with transition=go, got %q", hooks.guardFailedTransition)
+	if obs.guardFailedTransition != "go" {
+		t.Errorf("expected OnGuardFailed called with transition=go, got %q", obs.guardFailedTransition)
 	}
-	if hooks.guardFailedErr == nil {
+	if obs.guardFailedErr == nil {
 		t.Error("expected OnGuardFailed to receive the guard error, got nil")
 	}
 }

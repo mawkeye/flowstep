@@ -1,7 +1,6 @@
 package flowstep
 
 import (
-	"context"
 	"time"
 
 	"github.com/mawkeye/flowstep/types"
@@ -46,9 +45,31 @@ type (
 	// Clock provides deterministic time for the engine.
 	Clock = types.Clock
 
-	// Hooks allows consumers to observe engine behavior.
-	// All methods MUST be non-blocking.
-	Hooks = types.Hooks
+	// Observer is the marker type for all engine observer adapters.
+	Observer = types.Observer
+
+	// TransitionObserver receives a TransitionEvent after each successful state transition.
+	TransitionObserver = types.TransitionObserver
+
+	// GuardObserver receives a GuardFailureEvent when a guard rejects a transition.
+	GuardObserver = types.GuardObserver
+
+	// ActivityObserver receives events for activity lifecycle (dispatched, completed, failed).
+	ActivityObserver = types.ActivityObserver
+
+	// InfrastructureObserver receives StuckEvent and PostCommitErrorEvent.
+	InfrastructureObserver = types.InfrastructureObserver
+)
+
+// Observer event structs — re-exported for adapter implementors.
+type (
+	TransitionEvent       = types.TransitionEvent
+	GuardFailureEvent     = types.GuardFailureEvent
+	ActivityDispatchedEvent = types.ActivityDispatchedEvent
+	ActivityCompletedEvent  = types.ActivityCompletedEvent
+	ActivityFailedEvent     = types.ActivityFailedEvent
+	StuckEvent            = types.StuckEvent
+	PostCommitErrorEvent  = types.PostCommitErrorEvent
 )
 
 // RealClock uses time.Now().
@@ -56,14 +77,3 @@ type RealClock struct{}
 
 // Now returns the current time.
 func (RealClock) Now() time.Time { return time.Now() }
-
-// NoopHooks is the default Hooks implementation. Does nothing.
-type NoopHooks struct{}
-
-func (NoopHooks) OnTransition(context.Context, types.TransitionResult, time.Duration)                {}
-func (NoopHooks) OnGuardFailed(context.Context, string, string, string, error)                       {}
-func (NoopHooks) OnActivityDispatched(context.Context, types.ActivityInvocation)                      {}
-func (NoopHooks) OnActivityCompleted(context.Context, types.ActivityInvocation, *types.ActivityResult) {}
-func (NoopHooks) OnActivityFailed(context.Context, types.ActivityInvocation, error)                   {}
-func (NoopHooks) OnStuck(context.Context, types.WorkflowInstance, string)                             {}
-func (NoopHooks) OnPostCommitError(context.Context, string, error)                                    {}

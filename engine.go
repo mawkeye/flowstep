@@ -4,13 +4,13 @@ import (
 	"context"
 	"fmt"
 
-	internalengine "github.com/mawkeye/flowstep/internal/engine"
+	internalruntime "github.com/mawkeye/flowstep/internal/runtime"
 	"github.com/mawkeye/flowstep/types"
 )
 
 // Engine is the public workflow engine. Delegates to internal/engine.
 type Engine struct {
-	inner *internalengine.Engine
+	inner *internalruntime.Engine
 }
 
 // NewEngine creates a new Engine with the given options.
@@ -39,7 +39,7 @@ func NewEngine(opts ...Option) (*Engine, error) {
 		return nil, fmt.Errorf("flowstep: TxProvider is required")
 	}
 
-	deps := internalengine.Deps{
+	deps := internalruntime.Deps{
 		EventStore:     cfg.eventStore,
 		InstanceStore:  cfg.instanceStore,
 		TaskStore:      cfg.taskStore,
@@ -63,7 +63,7 @@ func NewEngine(opts ...Option) (*Engine, error) {
 		ErrEngineShutdown:    ErrEngineShutdown,
 	}
 
-	return &Engine{inner: internalengine.New(deps)}, nil
+	return &Engine{inner: internalruntime.New(deps)}, nil
 }
 
 // Register adds a workflow definition to the engine.

@@ -5,6 +5,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [v0.7.0] - 2026-03-10
+
+### Added
+- Task 12: `adapters/slogadapter` — structured logging observer using Go's `log/slog`. Implements all four observer interfaces (`TransitionObserver`, `GuardObserver`, `ActivityObserver`, `InfrastructureObserver`). Logs each engine event with structured attributes at configurable levels. Register via `flowstep.WithObservers(slogadapter.New(logger))`.
+- Seven functional options for per-event log level overrides: `WithTransitionLevel`, `WithGuardFailedLevel`, `WithActivityDispatchedLevel`, `WithActivityCompletedLevel`, `WithActivityFailedLevel`, `WithStuckLevel`, `WithPostCommitErrorLevel`.
+- Default levels: Info (transitions, activity dispatched/completed), Warn (guard failures), Error (stuck, activity failed, post-commit errors).
+
 ## [v0.6.0] - 2026-03-10
 
 ### Added

@@ -406,6 +406,25 @@ engine, err := flowstep.NewEngine(
 | `adapters/goroutinerunner` | Goroutine-per-activity | `ActivityRunner` |
 | `adapters/asynqrunner` | Asynq (Redis task queue) | `ActivityRunner` |
 
+### Observability
+
+| Package | Description | Interfaces |
+|---------|-------------|------------|
+| `adapters/slogadapter` | Structured logging via `log/slog` | `TransitionObserver`, `GuardObserver`, `ActivityObserver`, `InfrastructureObserver` |
+
+```go
+import (
+    "log/slog"
+    "github.com/mawkeye/flowstep/adapters/slogadapter"
+)
+
+logger := slog.Default()
+engine, _ := flowstep.NewEngine(
+    // ... storage options ...
+    flowstep.WithObservers(slogadapter.New(logger)),
+)
+```
+
 ### PostgreSQL Setup
 
 ```go

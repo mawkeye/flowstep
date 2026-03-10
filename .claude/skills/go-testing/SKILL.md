@@ -1,24 +1,49 @@
 ---
 name: go-testing
-description: "Handles all Golang testing tasks including running tests, writing new tests, and fixing test failures. Follows MCPSpy testing conventions with require for critical assertions and assert for non-critical ones."
+description: |
+  Handles Golang testing tasks: running tests, writing new tests, fixing failures.
+  Use when: running go test commands, debugging test failures, or checking coverage.
+  For TDD workflow (write test first), use the flowstate-tdd skill instead.
 ---
 
 # Go Testing Skill
 
-Provides guidance and automation for Golang testing tasks in the MCPSpy project.
+Quick reference for running and managing Go tests in flowstep.
 
-## Testing Philosophy
+## When to Use
 
-- Use `require` library for assertions that should stop test execution on failure
-- Use `assert` library for non-critical assertions where test should continue
-- Choose internal vs external package testing based on what needs to be tested
-- Test internal functions by placing test files in the same package (no `_test` suffix)
-- Avoid creating externally facing functions solely for testing purposes
-
-## When to Use This Skill
-
-- Running unit tests with `go test`
-- Writing new test files and test cases
+- Running test suites or individual tests
 - Debugging and fixing failing tests
-- Implementing test fixtures and mocks
-- Improving test coverage for the MCPSpy project
+- Checking test coverage
+- Understanding test output
+
+For the full TDD workflow (Red-Green-Refactor cycle), use the `flowstate-tdd` skill.
+
+## Commands
+
+```bash
+# Full suite (always use -count=1 to bypass cache):
+go test ./... -count=1
+
+# Single package:
+go test ./adapters/memstore/... -v -count=1
+
+# Single test:
+go test ./internal/engine/... -run TestEngine_Transition -v -count=1
+
+# Race detector:
+go test ./... -race -count=1
+
+# Coverage report:
+go test -coverprofile=coverage.out ./... && go tool cover -func=coverage.out
+```
+
+## Testing Conventions
+
+- **stdlib testing only** — no testify/require. Use `t.Fatalf` for fatal, `t.Errorf` for assertions.
+- **Table-driven tests** with `t.Run()` for multiple cases.
+- **`t.Helper()`** on all helper functions.
+- **Sentinel errors** checked with `errors.Is()`.
+- **White-box** tests in same package. **Black-box** tests in `_test` package suffix.
+- **`testutil.NewTestEngine(t)`** for full engine with in-memory adapters.
+- **`testutil.FakeClock`** instead of `time.Sleep` or real time.

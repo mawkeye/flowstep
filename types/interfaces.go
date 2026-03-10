@@ -82,17 +82,3 @@ type Clock interface {
 	Now() time.Time
 }
 
-// Hooks allows consumers to observe engine behavior.
-// All methods MUST be non-blocking.
-type Hooks interface {
-	OnTransition(ctx context.Context, result TransitionResult, duration time.Duration)
-	OnGuardFailed(ctx context.Context, workflowType, transitionName, guardName string, err error)
-	OnActivityDispatched(ctx context.Context, invocation ActivityInvocation)
-	OnActivityCompleted(ctx context.Context, invocation ActivityInvocation, result *ActivityResult)
-	OnActivityFailed(ctx context.Context, invocation ActivityInvocation, err error)
-	OnStuck(ctx context.Context, instance WorkflowInstance, reason string)
-	// OnPostCommitError is called when a post-commit operation fails.
-	// The transition is still considered successful because the state change has been committed.
-	// Implementations must be non-blocking.
-	OnPostCommitError(ctx context.Context, operation string, err error)
-}

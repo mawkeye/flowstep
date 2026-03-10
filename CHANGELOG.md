@@ -5,6 +5,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [v0.4.2] - 2026-03-10
+
+### Changed
+- Task 1: Decomposed `internal/engine/engine.go` (895 lines) into `internal/runtime/` sublayers — `runtime.go` (coordinator), `executor.go` (transition pipeline), `dispatcher.go` (post-commit), `scheduler.go` (trigger matching), `helpers.go` (utilities) (b9b842e)
+- All files remain under 300 lines; internal test suite preserved across 4 test files
+- No API or behavior changes — root `flowstep.Engine` interface unchanged
+
 ## [v0.4.1] - 2026-03-10
 
 ### Changed

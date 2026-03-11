@@ -22,7 +22,8 @@ type transitionBuilder struct {
 	childrenDef *types.ChildrenDef
 	triggerType types.TriggerType
 	triggerKey  string
-	allowSelf  bool
+	allowSelf   bool
+	historyMode types.HistoryMode
 }
 
 // TransitionOption configures a transition.
@@ -119,6 +120,15 @@ func SpawnChildren(childrenDef types.ChildrenDef) TransitionOption {
 func AllowSelfTransition() TransitionOption {
 	return func(tb *transitionBuilder) {
 		tb.allowSelf = true
+	}
+}
+
+// WithHistory marks this transition as history-aware. When fired, the engine
+// resolves the target compound state to its last-recorded child (shallow) or
+// last-recorded leaf (deep) instead of the default InitialChild.
+func WithHistory(mode types.HistoryMode) TransitionOption {
+	return func(tb *transitionBuilder) {
+		tb.historyMode = mode
 	}
 }
 
@@ -370,6 +380,7 @@ func (b *DefBuilder) Build() (*types.Definition, error) {
 			TriggerType:         tb.triggerType,
 			TriggerKey:          tb.triggerKey,
 			AllowSelfTransition: tb.allowSelf,
+			HistoryMode:         tb.historyMode,
 		}
 		def.Transitions[tb.name] = td
 	}

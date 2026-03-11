@@ -49,15 +49,16 @@ func Mermaid(d *Definition) string {
 		srcs := make([]string, len(tr.Sources))
 		copy(srcs, tr.Sources)
 		sort.Strings(srcs)
+		label := mermaidTransitionLabel(tr)
 		for _, src := range srcs {
 			if tr.Target != "" {
-				fmt.Fprintf(&b, "    %s --> %s : %s\n", src, tr.Target, tr.Name)
+				fmt.Fprintf(&b, "    %s --> %s : %s\n", src, tr.Target, label)
 			} else {
 				for _, route := range tr.Routes {
 					if route.Target == "" {
 						continue
 					}
-					fmt.Fprintf(&b, "    %s --> %s : %s\n", src, route.Target, tr.Name)
+					fmt.Fprintf(&b, "    %s --> %s : %s\n", src, route.Target, label)
 				}
 			}
 		}
@@ -99,15 +100,16 @@ func mermaidCompoundBlock(b *strings.Builder, name string, d *Definition, compou
 		srcs := make([]string, len(tr.Sources))
 		copy(srcs, tr.Sources)
 		sort.Strings(srcs)
+		label := mermaidTransitionLabel(tr)
 		for _, src := range srcs {
 			if tr.Target != "" {
-				fmt.Fprintf(b, "%s    %s --> %s : %s\n", indent, src, tr.Target, tr.Name)
+				fmt.Fprintf(b, "%s    %s --> %s : %s\n", indent, src, tr.Target, label)
 			} else {
 				for _, route := range tr.Routes {
 					if route.Target == "" {
 						continue
 					}
-					fmt.Fprintf(b, "%s    %s --> %s : %s\n", indent, src, route.Target, tr.Name)
+					fmt.Fprintf(b, "%s    %s --> %s : %s\n", indent, src, route.Target, label)
 				}
 			}
 		}
@@ -187,6 +189,19 @@ func mermaidStateDepth(name string, d *Definition) int {
 		st, ok = d.States[st.Parent]
 	}
 	return depth
+}
+
+// mermaidTransitionLabel returns the label for a transition arrow.
+// History-aware transitions are annotated: [H] for shallow, [H*] for deep.
+func mermaidTransitionLabel(tr TransitionDef) string {
+	switch tr.HistoryMode {
+	case HistoryShallow:
+		return tr.Name + " [H]"
+	case HistoryDeep:
+		return tr.Name + " [H*]"
+	default:
+		return tr.Name
+	}
 }
 
 // mermaidRootStateNames returns names of all root states (no Parent) sorted for determinism.

@@ -26,12 +26,13 @@ func NewInstanceStore(pool *pgxpool.Pool, errNotFound error) *InstanceStore {
 
 func (s *InstanceStore) Get(ctx context.Context, aggregateType, aggregateID string) (*types.WorkflowInstance, error) {
 	var inst types.WorkflowInstance
-	var stateData []byte
+	var stateData, shallowHistory, deepHistory []byte
 
 	err := s.pool.QueryRow(ctx, `
 		SELECT id, workflow_type, workflow_version, aggregate_type, aggregate_id,
 		       current_state, state_data, correlation_id, is_stuck, stuck_reason,
-		       retry_count, created_at, updated_at
+		       retry_count, created_at, updated_at,
+		       shallow_history, deep_history
 		FROM flowstep_instances
 		WHERE aggregate_type = $1 AND aggregate_id = $2`,
 		aggregateType, aggregateID,
@@ -41,6 +42,7 @@ func (s *InstanceStore) Get(ctx context.Context, aggregateType, aggregateID stri
 		&inst.CurrentState, &stateData, &inst.CorrelationID,
 		&inst.IsStuck, &inst.StuckReason, &inst.RetryCount,
 		&inst.CreatedAt, &inst.UpdatedAt,
+		&shallowHistory, &deepHistory,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -49,6 +51,10 @@ func (s *InstanceStore) Get(ctx context.Context, aggregateType, aggregateID stri
 		return nil, fmt.Errorf("pgxstore: get instance: %w", err)
 	}
 	_ = json.Unmarshal(stateData, &inst.StateData)
+	inst.ShallowHistory = make(map[string]string)
+	inst.DeepHistory = make(map[string]string)
+	_ = json.Unmarshal(shallowHistory, &inst.ShallowHistory)
+	_ = json.Unmarshal(deepHistory, &inst.DeepHistory)
 	return &inst, nil
 }
 
@@ -57,16 +63,20 @@ func (s *InstanceStore) Create(ctx context.Context, tx any, instance types.Workf
 		INSERT INTO flowstep_instances
 			(id, workflow_type, workflow_version, aggregate_type, aggregate_id,
 			 current_state, state_data, correlation_id, is_stuck, stuck_reason,
-			 retry_count, created_at, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`
+			 retry_count, created_at, updated_at,
+			 shallow_history, deep_history)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`
 
 	stateData, _ := json.Marshal(instance.StateData)
+	shallowHistory, _ := json.Marshal(instance.ShallowHistory)
+	deepHistory, _ := json.Marshal(instance.DeepHistory)
 	args := []any{
 		instance.ID, instance.WorkflowType, instance.WorkflowVersion,
 		instance.AggregateType, instance.AggregateID,
 		instance.CurrentState, stateData, instance.CorrelationID,
 		instance.IsStuck, instance.StuckReason, instance.RetryCount,
 		instance.CreatedAt, instance.UpdatedAt,
+		shallowHistory, deepHistory,
 	}
 
 	pgxTx, err := getTx(tx)
@@ -87,13 +97,17 @@ func (s *InstanceStore) Update(ctx context.Context, tx any, instance types.Workf
 	const q = `
 		UPDATE flowstep_instances
 		SET current_state = $1, state_data = $2, is_stuck = $3, stuck_reason = $4,
-		    retry_count = $5, updated_at = $6
-		WHERE aggregate_type = $7 AND aggregate_id = $8 AND updated_at = $9`
+		    retry_count = $5, updated_at = $6,
+		    shallow_history = $7, deep_history = $8
+		WHERE aggregate_type = $9 AND aggregate_id = $10 AND updated_at = $11`
 
 	stateData, _ := json.Marshal(instance.StateData)
+	shallowHistory, _ := json.Marshal(instance.ShallowHistory)
+	deepHistory, _ := json.Marshal(instance.DeepHistory)
 	args := []any{
 		instance.CurrentState, stateData, instance.IsStuck, instance.StuckReason,
 		instance.RetryCount, instance.UpdatedAt,
+		shallowHistory, deepHistory,
 		instance.AggregateType, instance.AggregateID,
 		instance.LastReadUpdatedAt,
 	}
@@ -125,7 +139,8 @@ func (s *InstanceStore) ListStuck(ctx context.Context) ([]types.WorkflowInstance
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, workflow_type, workflow_version, aggregate_type, aggregate_id,
 		       current_state, state_data, correlation_id, is_stuck, stuck_reason,
-		       retry_count, created_at, updated_at
+		       retry_count, created_at, updated_at,
+		       shallow_history, deep_history
 		FROM flowstep_instances
 		WHERE is_stuck = TRUE
 		ORDER BY updated_at`)
@@ -137,18 +152,23 @@ func (s *InstanceStore) ListStuck(ctx context.Context) ([]types.WorkflowInstance
 	var instances []types.WorkflowInstance
 	for rows.Next() {
 		var inst types.WorkflowInstance
-		var stateData []byte
+		var stateData, shallowHistory, deepHistory []byte
 		err := rows.Scan(
 			&inst.ID, &inst.WorkflowType, &inst.WorkflowVersion,
 			&inst.AggregateType, &inst.AggregateID,
 			&inst.CurrentState, &stateData, &inst.CorrelationID,
 			&inst.IsStuck, &inst.StuckReason, &inst.RetryCount,
 			&inst.CreatedAt, &inst.UpdatedAt,
+			&shallowHistory, &deepHistory,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("pgxstore: scan instance: %w", err)
 		}
 		_ = json.Unmarshal(stateData, &inst.StateData)
+		inst.ShallowHistory = make(map[string]string)
+		inst.DeepHistory = make(map[string]string)
+		_ = json.Unmarshal(shallowHistory, &inst.ShallowHistory)
+		_ = json.Unmarshal(deepHistory, &inst.DeepHistory)
 		instances = append(instances, inst)
 	}
 	return instances, rows.Err()

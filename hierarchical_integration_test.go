@@ -307,6 +307,203 @@ func TestHierarchical_FlatWorkflowBackwardCompat(t *testing.T) {
 	}
 }
 
+// ─── History States integration tests ─────────────────────────────────────────
+
+// buildHistoryWorkflow creates:
+//
+//	IDLE (initial)
+//	  → PROCESSING (compound, initial: REVIEWING)
+//	      REVIEWING (leaf)
+//	        → SHIPPING (leaf)
+//	  → DONE (terminal)
+//
+// Transitions:
+//
+//	"enter"          : IDLE → PROCESSING (no history)
+//	"advance"        : REVIEWING → SHIPPING
+//	"pause"          : PROCESSING → IDLE
+//	"resume_shallow" : IDLE → PROCESSING [shallow history]
+//	"resume_deep"    : IDLE → PROCESSING [deep history]
+//	"finish"         : PROCESSING → DONE
+func buildHistoryWorkflow(t *testing.T) *types.Definition {
+	t.Helper()
+	def, err := flowstep.Define("TestAgg", "history_workflow").
+		Version(1).
+		States(
+			flowstep.Initial("IDLE"),
+			flowstep.CompoundState("PROCESSING",
+				flowstep.InitialChild("REVIEWING"),
+			),
+			flowstep.State("REVIEWING", flowstep.Parent("PROCESSING")),
+			flowstep.State("SHIPPING", flowstep.Parent("PROCESSING")),
+			flowstep.Terminal("DONE"),
+		).
+		Transition("enter",
+			flowstep.From("IDLE"),
+			flowstep.To("PROCESSING"),
+		).
+		Transition("advance",
+			flowstep.From("REVIEWING"),
+			flowstep.To("SHIPPING"),
+		).
+		Transition("pause",
+			flowstep.From("PROCESSING"),
+			flowstep.To("IDLE"),
+		).
+		Transition("resume_shallow",
+			flowstep.From("IDLE"),
+			flowstep.To("PROCESSING"),
+			flowstep.WithHistory(flowstep.HistoryShallow),
+		).
+		Transition("resume_deep",
+			flowstep.From("IDLE"),
+			flowstep.To("PROCESSING"),
+			flowstep.WithHistory(flowstep.HistoryDeep),
+		).
+		Transition("finish",
+			flowstep.From("PROCESSING"),
+			flowstep.To("DONE"),
+		).
+		Build()
+	if err != nil {
+		t.Fatalf("buildHistoryWorkflow: %v", err)
+	}
+	return def
+}
+
+func TestHistory_ShallowResumesLastChild(t *testing.T) {
+	te := testutil.NewTestEngine(t)
+	if err := te.Engine.Register(buildHistoryWorkflow(t)); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	ctx := context.Background()
+	// Enter PROCESSING → lands at REVIEWING (initial child)
+	if _, err := te.Engine.Transition(ctx, "TestAgg", "h-1", "enter", "actor", nil); err != nil {
+		t.Fatalf("enter: %v", err)
+	}
+	testutil.AssertState(t, te, "TestAgg", "h-1", "REVIEWING")
+
+	// Advance to SHIPPING
+	if _, err := te.Engine.Transition(ctx, "TestAgg", "h-1", "advance", "actor", nil); err != nil {
+		t.Fatalf("advance: %v", err)
+	}
+	testutil.AssertState(t, te, "TestAgg", "h-1", "SHIPPING")
+
+	// Pause → IDLE (exits PROCESSING, records history)
+	if _, err := te.Engine.Transition(ctx, "TestAgg", "h-1", "pause", "actor", nil); err != nil {
+		t.Fatalf("pause: %v", err)
+	}
+	testutil.AssertState(t, te, "TestAgg", "h-1", "IDLE")
+
+	// Resume with shallow history → should land at SHIPPING (last direct child)
+	result, err := te.Engine.Transition(ctx, "TestAgg", "h-1", "resume_shallow", "actor", nil)
+	if err != nil {
+		t.Fatalf("resume_shallow: %v", err)
+	}
+	if result.NewState != "SHIPPING" {
+		t.Errorf("resume_shallow: NewState = %q, want SHIPPING", result.NewState)
+	}
+}
+
+func TestHistory_DeepResumesLastLeaf(t *testing.T) {
+	te := testutil.NewTestEngine(t)
+	if err := te.Engine.Register(buildHistoryWorkflow(t)); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	ctx := context.Background()
+	// Enter → REVIEWING, advance → SHIPPING, pause → IDLE
+	if _, err := te.Engine.Transition(ctx, "TestAgg", "h-2", "enter", "actor", nil); err != nil {
+		t.Fatalf("enter: %v", err)
+	}
+	if _, err := te.Engine.Transition(ctx, "TestAgg", "h-2", "advance", "actor", nil); err != nil {
+		t.Fatalf("advance: %v", err)
+	}
+	if _, err := te.Engine.Transition(ctx, "TestAgg", "h-2", "pause", "actor", nil); err != nil {
+		t.Fatalf("pause: %v", err)
+	}
+
+	// Resume with deep history → should land at SHIPPING (last leaf)
+	result, err := te.Engine.Transition(ctx, "TestAgg", "h-2", "resume_deep", "actor", nil)
+	if err != nil {
+		t.Fatalf("resume_deep: %v", err)
+	}
+	if result.NewState != "SHIPPING" {
+		t.Errorf("resume_deep: NewState = %q, want SHIPPING", result.NewState)
+	}
+}
+
+func TestHistory_NoHistoryFallsBackToInitialChild(t *testing.T) {
+	te := testutil.NewTestEngine(t)
+	if err := te.Engine.Register(buildHistoryWorkflow(t)); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	ctx := context.Background()
+	// First entry via resume_shallow (no history recorded yet) → should fall back to REVIEWING
+	result, err := te.Engine.Transition(ctx, "TestAgg", "h-3", "resume_shallow", "actor", nil)
+	if err != nil {
+		t.Fatalf("resume_shallow: %v", err)
+	}
+	if result.NewState != "REVIEWING" {
+		t.Errorf("no-history fallback: NewState = %q, want REVIEWING", result.NewState)
+	}
+}
+
+func TestHistory_ForceStateClearsHistory(t *testing.T) {
+	te := testutil.NewTestEngine(t)
+	if err := te.Engine.Register(buildHistoryWorkflow(t)); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	ctx := context.Background()
+	// Enter → REVIEWING, advance → SHIPPING, pause → IDLE (records history)
+	if _, err := te.Engine.Transition(ctx, "TestAgg", "h-4", "enter", "actor", nil); err != nil {
+		t.Fatalf("enter: %v", err)
+	}
+	if _, err := te.Engine.Transition(ctx, "TestAgg", "h-4", "advance", "actor", nil); err != nil {
+		t.Fatalf("advance: %v", err)
+	}
+	if _, err := te.Engine.Transition(ctx, "TestAgg", "h-4", "pause", "actor", nil); err != nil {
+		t.Fatalf("pause: %v", err)
+	}
+
+	// ForceState to IDLE (clears history)
+	if _, err := te.Engine.ForceState(ctx, "TestAgg", "h-4", "IDLE", "admin", "reset"); err != nil {
+		t.Fatalf("ForceState: %v", err)
+	}
+
+	// Resume with shallow history → history was cleared, should fall back to REVIEWING
+	result, err := te.Engine.Transition(ctx, "TestAgg", "h-4", "resume_shallow", "actor", nil)
+	if err != nil {
+		t.Fatalf("resume_shallow after ForceState: %v", err)
+	}
+	if result.NewState != "REVIEWING" {
+		t.Errorf("ForceState history clear: NewState = %q, want REVIEWING", result.NewState)
+	}
+}
+
+func TestHistory_MermaidAnnotation(t *testing.T) {
+	def := buildHistoryWorkflow(t)
+	diagram := types.Mermaid(def)
+
+	checks := []string{
+		"IDLE --> PROCESSING : resume_shallow [H]",
+		"IDLE --> PROCESSING : resume_deep [H*]",
+		"IDLE --> PROCESSING : enter",
+	}
+	for _, want := range checks {
+		if !strings.Contains(diagram, want) {
+			t.Errorf("Mermaid missing %q\ngot:\n%s", want, diagram)
+		}
+	}
+	// "enter" must NOT have history annotation
+	if strings.Contains(diagram, "enter [H]") || strings.Contains(diagram, "enter [H*]") {
+		t.Errorf("non-history transition 'enter' must not have annotation\ngot:\n%s", diagram)
+	}
+}
+
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
 func safeIdx(s []string, i int) string {

@@ -17,6 +17,16 @@ const (
 	TriggerTimeout         TriggerType = "TIMEOUT"
 )
 
+// HistoryMode determines how a compound state records and restores its last-active child.
+type HistoryMode string
+
+const (
+	// HistoryShallow remembers the last direct child of the compound state.
+	HistoryShallow HistoryMode = "SHALLOW"
+	// HistoryDeep remembers the last leaf descendant of the compound state.
+	HistoryDeep HistoryMode = "DEEP"
+)
+
 // Guard checks preconditions before a transition. MUST be deterministic.
 // Only read from aggregate and params. No API calls, no DB queries, no I/O.
 // Return nil to pass. Return error to block.
@@ -86,6 +96,7 @@ type TransitionDef struct {
 	TriggerType         TriggerType
 	TriggerKey          string
 	AllowSelfTransition bool
+	HistoryMode         HistoryMode
 }
 
 // Definition is an immutable, validated workflow definition.

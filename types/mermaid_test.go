@@ -190,6 +190,64 @@ func TestMermaidExport_FlatWorkflow_UnchangedOutput(t *testing.T) {
 	}
 }
 
+// ─── Task 5 (history states): Mermaid history annotation tests ───────────────
+
+func TestMermaidExport_HistoryShallow_AnnotatesLabel(t *testing.T) {
+	def := &Definition{
+		AggregateType:  "order",
+		WorkflowType:   "history-shallow",
+		InitialState:   "IDLE",
+		TerminalStates: []string{"DONE"},
+		States: map[string]StateDef{
+			"IDLE":       {Name: "IDLE", IsInitial: true},
+			"PROCESSING": {Name: "PROCESSING", IsCompound: true, InitialChild: "DRAFT", Children: []string{"DRAFT"}},
+			"DRAFT":      {Name: "DRAFT", Parent: "PROCESSING"},
+			"DONE":       {Name: "DONE", IsTerminal: true},
+		},
+		Transitions: map[string]TransitionDef{
+			"start":  {Name: "start", Sources: []string{"IDLE"}, Target: "PROCESSING"},
+			"resume": {Name: "resume", Sources: []string{"IDLE"}, Target: "PROCESSING", HistoryMode: HistoryShallow},
+			"finish": {Name: "finish", Sources: []string{"PROCESSING"}, Target: "DONE"},
+		},
+	}
+
+	diagram := Mermaid(def)
+
+	if !strings.Contains(diagram, "IDLE --> PROCESSING : resume [H]") {
+		t.Errorf("expected shallow history annotation [H]\ngot:\n%s", diagram)
+	}
+	// Non-history transition must NOT be annotated.
+	if strings.Contains(diagram, "start [H]") || strings.Contains(diagram, "start [H*]") {
+		t.Errorf("non-history transition 'start' must not have history annotation\ngot:\n%s", diagram)
+	}
+}
+
+func TestMermaidExport_HistoryDeep_AnnotatesLabel(t *testing.T) {
+	def := &Definition{
+		AggregateType:  "order",
+		WorkflowType:   "history-deep",
+		InitialState:   "IDLE",
+		TerminalStates: []string{"DONE"},
+		States: map[string]StateDef{
+			"IDLE":       {Name: "IDLE", IsInitial: true},
+			"PROCESSING": {Name: "PROCESSING", IsCompound: true, InitialChild: "DRAFT", Children: []string{"DRAFT"}},
+			"DRAFT":      {Name: "DRAFT", Parent: "PROCESSING"},
+			"DONE":       {Name: "DONE", IsTerminal: true},
+		},
+		Transitions: map[string]TransitionDef{
+			"start":  {Name: "start", Sources: []string{"IDLE"}, Target: "PROCESSING"},
+			"resume": {Name: "resume", Sources: []string{"IDLE"}, Target: "PROCESSING", HistoryMode: HistoryDeep},
+			"finish": {Name: "finish", Sources: []string{"PROCESSING"}, Target: "DONE"},
+		},
+	}
+
+	diagram := Mermaid(def)
+
+	if !strings.Contains(diagram, "IDLE --> PROCESSING : resume [H*]") {
+		t.Errorf("expected deep history annotation [H*]\ngot:\n%s", diagram)
+	}
+}
+
 func TestMermaidExportMultiSource(t *testing.T) {
 	def := &Definition{
 		AggregateType:  "order",

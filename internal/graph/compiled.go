@@ -233,8 +233,8 @@ func computeHash(def *types.Definition) string {
 		tr := def.Transitions[name]
 		srcs := slices.Clone(tr.Sources)
 		slices.Sort(srcs)
-		fmt.Fprintf(h, "tr:%s|srcs:%v|target:%s|event:%s|trigger:%s|key:%s\n",
-			tr.Name, srcs, tr.Target, tr.Event, tr.TriggerType, tr.TriggerKey)
+		fmt.Fprintf(h, "tr:%s|srcs:%v|target:%s|event:%s|trigger:%s|key:%s|history:%s\n",
+			tr.Name, srcs, tr.Target, tr.Event, tr.TriggerType, tr.TriggerKey, tr.HistoryMode)
 
 		// Activities (sorted by name)
 		actNames := make([]string, len(tr.Activities))

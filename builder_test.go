@@ -233,3 +233,64 @@ func TestBuild_BackwardCompatible_FlatWorkflow(t *testing.T) {
 		}
 	}
 }
+
+// ─── Task 4 (history states): Builder WithHistory tests ──────────────────────
+
+func TestWithHistory_Shallow_SetsHistoryMode(t *testing.T) {
+	def, err := Define("order", "history-shallow").
+		States(
+			Initial("CREATED"),
+			CompoundState("PROCESSING", InitialChild("VALIDATING")),
+			State("VALIDATING", Parent("PROCESSING")),
+			Terminal("DONE"),
+		).
+		Transition("start", From("CREATED"), To("PROCESSING"), Event("Start")).
+		Transition("resume", From("CREATED"), To("PROCESSING"), WithHistory(HistoryShallow)).
+		Transition("approve", From("VALIDATING"), To("DONE"), Event("Approve")).
+		Build()
+
+	if err != nil {
+		t.Fatalf("Build() failed: %v", err)
+	}
+	tr := def.Transitions["resume"]
+	if tr.HistoryMode != HistoryShallow {
+		t.Errorf("HistoryMode = %q, want %q", tr.HistoryMode, HistoryShallow)
+	}
+}
+
+func TestWithHistory_Deep_SetsHistoryMode(t *testing.T) {
+	def, err := Define("order", "history-deep").
+		States(
+			Initial("CREATED"),
+			CompoundState("PROCESSING", InitialChild("VALIDATING")),
+			State("VALIDATING", Parent("PROCESSING")),
+			Terminal("DONE"),
+		).
+		Transition("start", From("CREATED"), To("PROCESSING"), Event("Start")).
+		Transition("resume", From("CREATED"), To("PROCESSING"), WithHistory(HistoryDeep)).
+		Transition("approve", From("VALIDATING"), To("DONE"), Event("Approve")).
+		Build()
+
+	if err != nil {
+		t.Fatalf("Build() failed: %v", err)
+	}
+	tr := def.Transitions["resume"]
+	if tr.HistoryMode != HistoryDeep {
+		t.Errorf("HistoryMode = %q, want %q", tr.HistoryMode, HistoryDeep)
+	}
+}
+
+func TestTransition_WithoutHistory_HasEmptyHistoryMode(t *testing.T) {
+	def, err := Define("order", "no-history").
+		States(Initial("CREATED"), Terminal("DONE")).
+		Transition("finish", From("CREATED"), To("DONE"), Event("Finish")).
+		Build()
+
+	if err != nil {
+		t.Fatalf("Build() failed: %v", err)
+	}
+	tr := def.Transitions["finish"]
+	if tr.HistoryMode != "" {
+		t.Errorf("HistoryMode = %q, want empty", tr.HistoryMode)
+	}
+}

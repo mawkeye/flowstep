@@ -146,12 +146,14 @@ func NewInstanceStore(db *sql.DB, errNotFound error) *InstanceStore {
 func (s *InstanceStore) Get(ctx context.Context, aggregateType, aggregateID string) (*types.WorkflowInstance, error) {
 	var inst types.WorkflowInstance
 	var stateData, createdAt, updatedAt string
+	var shallowHistory, deepHistory string
 	var isStuck int
 
 	err := s.db.QueryRowContext(ctx, `
 		SELECT id, workflow_type, workflow_version, aggregate_type, aggregate_id,
 		       current_state, state_data, correlation_id, is_stuck, stuck_reason,
-		       retry_count, created_at, updated_at
+		       retry_count, created_at, updated_at,
+		       shallow_history, deep_history
 		FROM flowstep_instances WHERE aggregate_type = ? AND aggregate_id = ?`,
 		aggregateType, aggregateID,
 	).Scan(
@@ -160,6 +162,7 @@ func (s *InstanceStore) Get(ctx context.Context, aggregateType, aggregateID stri
 		&inst.CurrentState, &stateData, &inst.CorrelationID,
 		&isStuck, &inst.StuckReason, &inst.RetryCount,
 		&createdAt, &updatedAt,
+		&shallowHistory, &deepHistory,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -171,12 +174,18 @@ func (s *InstanceStore) Get(ctx context.Context, aggregateType, aggregateID stri
 	_ = json.Unmarshal([]byte(stateData), &inst.StateData)
 	inst.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
 	inst.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updatedAt)
+	inst.ShallowHistory = make(map[string]string)
+	inst.DeepHistory = make(map[string]string)
+	_ = json.Unmarshal([]byte(shallowHistory), &inst.ShallowHistory)
+	_ = json.Unmarshal([]byte(deepHistory), &inst.DeepHistory)
 	return &inst, nil
 }
 
 func (s *InstanceStore) Create(ctx context.Context, tx any, instance types.WorkflowInstance) error {
 	sqlTx := tx.(*sql.Tx)
 	stateData, _ := json.Marshal(instance.StateData)
+	shallowHistory, _ := json.Marshal(instance.ShallowHistory)
+	deepHistory, _ := json.Marshal(instance.DeepHistory)
 	isStuck := 0
 	if instance.IsStuck {
 		isStuck = 1
@@ -186,14 +195,16 @@ func (s *InstanceStore) Create(ctx context.Context, tx any, instance types.Workf
 		INSERT INTO flowstep_instances
 			(id, workflow_type, workflow_version, aggregate_type, aggregate_id,
 			 current_state, state_data, correlation_id, is_stuck, stuck_reason,
-			 retry_count, created_at, updated_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			 retry_count, created_at, updated_at,
+			 shallow_history, deep_history)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		instance.ID, instance.WorkflowType, instance.WorkflowVersion,
 		instance.AggregateType, instance.AggregateID,
 		instance.CurrentState, string(stateData), instance.CorrelationID,
 		isStuck, instance.StuckReason, instance.RetryCount,
 		instance.CreatedAt.Format(time.RFC3339Nano),
 		instance.UpdatedAt.Format(time.RFC3339Nano),
+		string(shallowHistory), string(deepHistory),
 	)
 	if err != nil {
 		return fmt.Errorf("sqlitestore: create instance: %w", err)
@@ -204,6 +215,8 @@ func (s *InstanceStore) Create(ctx context.Context, tx any, instance types.Workf
 func (s *InstanceStore) Update(ctx context.Context, tx any, instance types.WorkflowInstance) error {
 	sqlTx := tx.(*sql.Tx)
 	stateData, _ := json.Marshal(instance.StateData)
+	shallowHistory, _ := json.Marshal(instance.ShallowHistory)
+	deepHistory, _ := json.Marshal(instance.DeepHistory)
 	isStuck := 0
 	if instance.IsStuck {
 		isStuck = 1
@@ -212,10 +225,12 @@ func (s *InstanceStore) Update(ctx context.Context, tx any, instance types.Workf
 	result, err := sqlTx.ExecContext(ctx, `
 		UPDATE flowstep_instances
 		SET current_state = ?, state_data = ?, is_stuck = ?, stuck_reason = ?,
-		    retry_count = ?, updated_at = ?
+		    retry_count = ?, updated_at = ?,
+		    shallow_history = ?, deep_history = ?
 		WHERE aggregate_type = ? AND aggregate_id = ? AND updated_at = ?`,
 		instance.CurrentState, string(stateData), isStuck, instance.StuckReason,
 		instance.RetryCount, instance.UpdatedAt.Format(time.RFC3339Nano),
+		string(shallowHistory), string(deepHistory),
 		instance.AggregateType, instance.AggregateID,
 		instance.LastReadUpdatedAt.Format(time.RFC3339Nano),
 	)
@@ -232,7 +247,8 @@ func (s *InstanceStore) ListStuck(ctx context.Context) ([]types.WorkflowInstance
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, workflow_type, workflow_version, aggregate_type, aggregate_id,
 		       current_state, state_data, correlation_id, is_stuck, stuck_reason,
-		       retry_count, created_at, updated_at
+		       retry_count, created_at, updated_at,
+		       shallow_history, deep_history
 		FROM flowstep_instances WHERE is_stuck = 1 ORDER BY updated_at`)
 	if err != nil {
 		return nil, fmt.Errorf("sqlitestore: query stuck: %w", err)
@@ -243,6 +259,7 @@ func (s *InstanceStore) ListStuck(ctx context.Context) ([]types.WorkflowInstance
 	for rows.Next() {
 		var inst types.WorkflowInstance
 		var stateData, createdAt, updatedAt string
+		var shallowHistory, deepHistory string
 		var isStuck int
 		err := rows.Scan(
 			&inst.ID, &inst.WorkflowType, &inst.WorkflowVersion,
@@ -250,6 +267,7 @@ func (s *InstanceStore) ListStuck(ctx context.Context) ([]types.WorkflowInstance
 			&inst.CurrentState, &stateData, &inst.CorrelationID,
 			&isStuck, &inst.StuckReason, &inst.RetryCount,
 			&createdAt, &updatedAt,
+			&shallowHistory, &deepHistory,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("sqlitestore: scan instance: %w", err)
@@ -258,6 +276,10 @@ func (s *InstanceStore) ListStuck(ctx context.Context) ([]types.WorkflowInstance
 		_ = json.Unmarshal([]byte(stateData), &inst.StateData)
 		inst.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
 		inst.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updatedAt)
+		inst.ShallowHistory = make(map[string]string)
+		inst.DeepHistory = make(map[string]string)
+		_ = json.Unmarshal([]byte(shallowHistory), &inst.ShallowHistory)
+		_ = json.Unmarshal([]byte(deepHistory), &inst.DeepHistory)
 		instances = append(instances, inst)
 	}
 	return instances, rows.Err()

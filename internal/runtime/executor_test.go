@@ -832,6 +832,257 @@ func TestCommitTransition_DanglingTaskCleanup_NoTaskInvalidator_DegradeGracefull
 	}
 }
 
+// ─── Task 9 (history states): history recording + history-aware resolution ────
+
+// historyDef: IDLE→PROCESSING(compound)→DRAFT(leaf)|REVIEW(leaf)→DONE(terminal)
+// pause: PROCESSING→IDLE (events bubble from DRAFT/REVIEW; records history)
+// resume-shallow/resume-deep: IDLE→PROCESSING with HistoryMode set
+func historyDef() *types.Definition {
+	return &types.Definition{
+		WorkflowType:   "order-history",
+		AggregateType:  "TestAgg",
+		Version:        1,
+		InitialState:   "IDLE",
+		TerminalStates: []string{"DONE"},
+		States: map[string]types.StateDef{
+			"IDLE": {Name: "IDLE", IsInitial: true},
+			"PROCESSING": {
+				Name: "PROCESSING", IsCompound: true,
+				InitialChild: "DRAFT", Children: []string{"DRAFT", "REVIEW"},
+			},
+			"DRAFT":  {Name: "DRAFT", Parent: "PROCESSING"},
+			"REVIEW": {Name: "REVIEW", Parent: "PROCESSING"},
+			"DONE":   {Name: "DONE", IsTerminal: true},
+		},
+		Transitions: map[string]types.TransitionDef{
+			"start":          {Name: "start", Sources: []string{"IDLE"}, Target: "PROCESSING"},
+			"submit":         {Name: "submit", Sources: []string{"DRAFT"}, Target: "REVIEW"},
+			"pause":          {Name: "pause", Sources: []string{"PROCESSING"}, Target: "IDLE"},
+			"resume-shallow": {Name: "resume-shallow", Sources: []string{"IDLE"}, Target: "PROCESSING", HistoryMode: types.HistoryShallow},
+			"resume-deep":    {Name: "resume-deep", Sources: []string{"IDLE"}, Target: "PROCESSING", HistoryMode: types.HistoryDeep},
+			"finish":         {Name: "finish", Sources: []string{"PROCESSING"}, Target: "DONE"},
+		},
+	}
+}
+
+// historyThreeLevelDef: IDLE→ROOT(compound)→PROCESSING(compound)→DRAFT|REVIEW→DONE
+// Used to test shallow history secondary resolution (compound child requires another InitialLeafMap lookup).
+func historyThreeLevelDef() *types.Definition {
+	return &types.Definition{
+		WorkflowType:   "order-3level",
+		AggregateType:  "TestAgg",
+		Version:        1,
+		InitialState:   "IDLE",
+		TerminalStates: []string{"DONE"},
+		States: map[string]types.StateDef{
+			"IDLE": {Name: "IDLE", IsInitial: true},
+			"ROOT": {
+				Name: "ROOT", IsCompound: true,
+				InitialChild: "PROCESSING", Children: []string{"PROCESSING"},
+			},
+			"PROCESSING": {
+				Name: "PROCESSING", IsCompound: true, Parent: "ROOT",
+				InitialChild: "DRAFT", Children: []string{"DRAFT", "REVIEW"},
+			},
+			"DRAFT":  {Name: "DRAFT", Parent: "PROCESSING"},
+			"REVIEW": {Name: "REVIEW", Parent: "PROCESSING"},
+			"DONE":   {Name: "DONE", IsTerminal: true},
+		},
+		Transitions: map[string]types.TransitionDef{
+			"start":          {Name: "start", Sources: []string{"IDLE"}, Target: "ROOT"},
+			"submit":         {Name: "submit", Sources: []string{"DRAFT"}, Target: "REVIEW"},
+			"pause":          {Name: "pause", Sources: []string{"ROOT"}, Target: "IDLE"},
+			"resume-shallow": {Name: "resume-shallow", Sources: []string{"IDLE"}, Target: "ROOT", HistoryMode: types.HistoryShallow},
+			"resume-deep":    {Name: "resume-deep", Sources: []string{"IDLE"}, Target: "ROOT", HistoryMode: types.HistoryDeep},
+			"finish":         {Name: "finish", Sources: []string{"ROOT"}, Target: "DONE"},
+		},
+	}
+}
+
+func TestCommitTransition_HistoryRecording_PopulatesHistoryMaps(t *testing.T) {
+	is := newMemInstanceStore(errInstanceNotFound)
+	e := newHierarchyEngine(is, nil)
+	if err := e.Register(historyDef()); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	// Start at REVIEW (leaf of PROCESSING): simulate having navigated there already.
+	inst := simpleInstance("REVIEW")
+	inst.WorkflowType = "order-history"
+	inst.WorkflowVersion = 1
+	inst.ShallowHistory = make(map[string]string)
+	inst.DeepHistory = make(map[string]string)
+	is.instances[is.key(inst.AggregateType, inst.AggregateID)] = inst
+
+	// Transition "pause": bubbles from REVIEW to PROCESSING, exits PROCESSING → IDLE.
+	_, err := e.Transition(context.Background(), "TestAgg", "agg-1", "pause", "actor", nil)
+	if err != nil {
+		t.Fatalf("pause transition error: %v", err)
+	}
+
+	got, _ := is.Get(context.Background(), "TestAgg", "agg-1")
+	if got.CurrentState != "IDLE" {
+		t.Errorf("CurrentState = %q, want IDLE", got.CurrentState)
+	}
+	if got.ShallowHistory["PROCESSING"] != "REVIEW" {
+		t.Errorf("ShallowHistory[PROCESSING] = %q, want REVIEW", got.ShallowHistory["PROCESSING"])
+	}
+	if got.DeepHistory["PROCESSING"] != "REVIEW" {
+		t.Errorf("DeepHistory[PROCESSING] = %q, want REVIEW", got.DeepHistory["PROCESSING"])
+	}
+}
+
+func TestCommitTransition_WithHistoryShallow_ResumesAtLastChild(t *testing.T) {
+	is := newMemInstanceStore(errInstanceNotFound)
+	e := newHierarchyEngine(is, nil)
+	if err := e.Register(historyDef()); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	// Instance at IDLE with history set to REVIEW (simulates prior exit from REVIEW).
+	inst := simpleInstance("IDLE")
+	inst.WorkflowType = "order-history"
+	inst.WorkflowVersion = 1
+	inst.ShallowHistory = map[string]string{"PROCESSING": "REVIEW"}
+	inst.DeepHistory = map[string]string{"PROCESSING": "REVIEW"}
+	is.instances[is.key(inst.AggregateType, inst.AggregateID)] = inst
+
+	result, err := e.Transition(context.Background(), "TestAgg", "agg-1", "resume-shallow", "actor", nil)
+	if err != nil {
+		t.Fatalf("resume-shallow transition error: %v", err)
+	}
+	if result.NewState != "REVIEW" {
+		t.Errorf("NewState = %q, want REVIEW (shallow history resume)", result.NewState)
+	}
+}
+
+func TestCommitTransition_WithHistoryDeep_ResumesAtLastLeaf(t *testing.T) {
+	is := newMemInstanceStore(errInstanceNotFound)
+	e := newHierarchyEngine(is, nil)
+	if err := e.Register(historyDef()); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	inst := simpleInstance("IDLE")
+	inst.WorkflowType = "order-history"
+	inst.WorkflowVersion = 1
+	inst.ShallowHistory = map[string]string{"PROCESSING": "REVIEW"}
+	inst.DeepHistory = map[string]string{"PROCESSING": "REVIEW"}
+	is.instances[is.key(inst.AggregateType, inst.AggregateID)] = inst
+
+	result, err := e.Transition(context.Background(), "TestAgg", "agg-1", "resume-deep", "actor", nil)
+	if err != nil {
+		t.Fatalf("resume-deep transition error: %v", err)
+	}
+	if result.NewState != "REVIEW" {
+		t.Errorf("NewState = %q, want REVIEW (deep history resume)", result.NewState)
+	}
+}
+
+func TestCommitTransition_WithHistory_NoHistoryFallsBackToInitialChild(t *testing.T) {
+	is := newMemInstanceStore(errInstanceNotFound)
+	e := newHierarchyEngine(is, nil)
+	if err := e.Register(historyDef()); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	// No history recorded — should fall back to InitialChild (DRAFT).
+	inst := simpleInstance("IDLE")
+	inst.WorkflowType = "order-history"
+	inst.WorkflowVersion = 1
+	inst.ShallowHistory = make(map[string]string)
+	inst.DeepHistory = make(map[string]string)
+	is.instances[is.key(inst.AggregateType, inst.AggregateID)] = inst
+
+	result, err := e.Transition(context.Background(), "TestAgg", "agg-1", "resume-shallow", "actor", nil)
+	if err != nil {
+		t.Fatalf("resume-shallow fallback error: %v", err)
+	}
+	if result.NewState != "DRAFT" {
+		t.Errorf("NewState = %q, want DRAFT (fallback to InitialChild when no history)", result.NewState)
+	}
+}
+
+func TestCommitTransition_WithHistoryShallow_SecondaryResolution_CompoundChild(t *testing.T) {
+	// 3-level: IDLE → ROOT(compound) → PROCESSING(compound) → DRAFT | REVIEW
+	// After pausing from REVIEW:
+	//   ShallowHistory[ROOT] = PROCESSING (direct child of ROOT)
+	//   ShallowHistory[PROCESSING] = REVIEW
+	// resume-shallow targeting ROOT:
+	//   shallow resolves ROOT → PROCESSING (compound) → secondary: InitialLeafMap[PROCESSING] = DRAFT
+	is := newMemInstanceStore(errInstanceNotFound)
+	e := newHierarchyEngine(is, nil)
+	if err := e.Register(historyThreeLevelDef()); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	// Pre-set history as if we had previously been at REVIEW and exited.
+	inst := simpleInstance("IDLE")
+	inst.WorkflowType = "order-3level"
+	inst.WorkflowVersion = 1
+	inst.ShallowHistory = map[string]string{"ROOT": "PROCESSING", "PROCESSING": "REVIEW"}
+	inst.DeepHistory = map[string]string{"ROOT": "REVIEW", "PROCESSING": "REVIEW"}
+	is.instances[is.key(inst.AggregateType, inst.AggregateID)] = inst
+
+	result, err := e.Transition(context.Background(), "TestAgg", "agg-1", "resume-shallow", "actor", nil)
+	if err != nil {
+		t.Fatalf("resume-shallow 3-level error: %v", err)
+	}
+	// Shallow history: ROOT → PROCESSING (direct child of ROOT).
+	// PROCESSING is compound → secondary resolution via InitialLeafMap → DRAFT.
+	if result.NewState != "DRAFT" {
+		t.Errorf("NewState = %q, want DRAFT (shallow secondary resolution: ROOT→PROCESSING→InitialChild=DRAFT)", result.NewState)
+	}
+}
+
+// ─── Task 10 (history states): ForceState clears history + createInstance initializes maps ───
+
+func TestForceState_ClearsHistoryMaps(t *testing.T) {
+	is := newMemInstanceStore(errInstanceNotFound)
+	e := newHierarchyEngine(is, nil)
+	if err := e.Register(historyDef()); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	// Instance with history pre-populated (simulates prior transitions).
+	inst := simpleInstance("REVIEW")
+	inst.WorkflowType = "order-history"
+	inst.WorkflowVersion = 1
+	inst.ShallowHistory = map[string]string{"PROCESSING": "REVIEW"}
+	inst.DeepHistory = map[string]string{"PROCESSING": "REVIEW"}
+	is.instances[is.key(inst.AggregateType, inst.AggregateID)] = inst
+
+	_, err := e.ForceState(context.Background(), "TestAgg", "agg-1", "IDLE", "admin", "recovery")
+	if err != nil {
+		t.Fatalf("ForceState error: %v", err)
+	}
+
+	got, _ := is.Get(context.Background(), "TestAgg", "agg-1")
+	if len(got.ShallowHistory) != 0 {
+		t.Errorf("ShallowHistory = %v, want empty after ForceState", got.ShallowHistory)
+	}
+	if len(got.DeepHistory) != 0 {
+		t.Errorf("DeepHistory = %v, want empty after ForceState", got.DeepHistory)
+	}
+}
+
+func TestCreateInstance_InitializesHistoryMaps(t *testing.T) {
+	is := newMemInstanceStore(errInstanceNotFound)
+	e := newHierarchyEngine(is, nil)
+	if err := e.Register(historyDef()); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	// First Transition call for a new aggregate will call createInstance internally.
+	result, err := e.Transition(context.Background(), "TestAgg", "new-agg", "start", "actor", nil)
+	if err != nil {
+		t.Fatalf("Transition (create+start) error: %v", err)
+	}
+
+	got, _ := is.Get(context.Background(), "TestAgg", "new-agg")
+	if got.ShallowHistory == nil {
+		t.Error("ShallowHistory is nil after createInstance, want initialized empty map")
+	}
+	if got.DeepHistory == nil {
+		t.Error("DeepHistory is nil after createInstance, want initialized empty map")
+	}
+	_ = result
+}
+
 func TestValidateTransition_EventBubbling_GrandparentHandles(t *testing.T) {
 	// 3-level: ROOT (compound) → ORDER (compound) → VALIDATING (leaf)
 	// "approve" is on ROOT; current state is VALIDATING

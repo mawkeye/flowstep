@@ -11,6 +11,7 @@ The package requires a minimum version of Go 1.25.
 - [Core Concepts](#core-concepts)
   - [States](#states)
   - [Hierarchical States](#hierarchical-states)
+  - [History States](#history-states)
   - [Transitions](#transitions)
   - [Guards](#guards)
   - [Conditional Routing](#conditional-routing)
@@ -38,6 +39,7 @@ The package requires a minimum version of Go 1.25.
 
 - **Fluent builder DSL** for defining workflows as state machines
 - **Hierarchical states** — compound/nested states with entry/exit activities, event bubbling, and LCA-based transitions
+- **History states** — shallow (`[H]`) and deep (`[H*]`) history for resuming previous state within compound states
 - **Guards** — deterministic precondition checks (no I/O)
 - **Conditional routing** — branch transitions based on runtime conditions
 - **Signals** — trigger transitions from external events (payments, webhooks)
@@ -185,6 +187,35 @@ Key behaviors:
 - **LCA-based transitions:** The engine computes the Lowest Common Ancestor to determine which states to exit and enter. Only states between the source and LCA are exited, and states between the LCA and target are entered.
 - **Dangling task cleanup:** Pending tasks for states in an exited subtree are automatically invalidated (requires `TaskInvalidator` on your `TaskStore`).
 - **Savepoint support:** Entry activity failures roll back to a savepoint, preserving the pre-transition state (requires `SavepointProvider` on your `TxProvider`). Without savepoints, the instance is marked STUCK.
+
+### History States
+
+History states allow a compound state to "remember" which substate was last active. When re-entering with history, the engine resumes from the recorded state instead of the default `InitialChild`.
+
+```go
+// Shallow history: remembers the last direct child of the compound state
+flowstep.Transition("resume",
+    flowstep.From("IDLE"),
+    flowstep.To("PROCESSING"),
+    flowstep.WithHistory(flowstep.HistoryShallow),
+)
+
+// Deep history: remembers the last leaf (innermost active state)
+flowstep.Transition("resume_deep",
+    flowstep.From("IDLE"),
+    flowstep.To("PROCESSING"),
+    flowstep.WithHistory(flowstep.HistoryDeep),
+)
+```
+
+Key behaviors:
+
+- **Automatic recording:** History is recorded on every compound state exit — no opt-in per state needed.
+- **Shallow (`[H]`):** Records the last direct child of the compound state. If that child is itself compound, its `InitialChild` is used (secondary resolution).
+- **Deep (`[H*]`):** Records the innermost leaf state. Used directly as the re-entry target.
+- **Fallback:** When no history is recorded (first entry or after `ForceState`), the engine falls back to `InitialChild` — identical to transitions without history.
+- **`ForceState` clears history:** Admin recovery resets both shallow and deep history maps.
+- **Mermaid annotation:** History-aware transitions are annotated with `[H]` (shallow) or `[H*]` (deep) in Mermaid diagrams.
 
 ### Transitions
 

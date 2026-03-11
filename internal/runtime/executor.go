@@ -212,10 +212,33 @@ func (e *Engine) commitTransition(
 	sourceLeaf := instance.CurrentState
 	now := e.deps.Clock.Now()
 
-	// 1. Resolve compound target to its initial leaf.
+	// 1. Resolve target state — history-aware if HistoryMode is set, otherwise InitialLeafMap fallback.
 	resolvedTarget := targetState
-	if leaf, ok := cm.InitialLeafMap[targetState]; ok {
-		resolvedTarget = leaf
+	switch ct.Def.HistoryMode {
+	case types.HistoryShallow:
+		if recorded, ok := instance.ShallowHistory[targetState]; ok {
+			resolvedTarget = recorded
+			// Secondary resolution: if the shallow-recorded child is itself compound,
+			// resolve it to its initial leaf via InitialLeafMap.
+			// Note: secondary resolution always uses InitialLeafMap (not the child
+			// compound's own history). Only the transition marked WithHistory(Shallow)
+			// uses history; compound children of the resolved target use their InitialChild.
+			if leaf, ok2 := cm.InitialLeafMap[resolvedTarget]; ok2 {
+				resolvedTarget = leaf
+			}
+		} else if leaf, ok := cm.InitialLeafMap[targetState]; ok {
+			resolvedTarget = leaf // no history yet — fall back to initial leaf
+		}
+	case types.HistoryDeep:
+		if recorded, ok := instance.DeepHistory[targetState]; ok {
+			resolvedTarget = recorded // deep history always points to a leaf
+		} else if leaf, ok := cm.InitialLeafMap[targetState]; ok {
+			resolvedTarget = leaf // no history yet — fall back to initial leaf
+		}
+	default:
+		if leaf, ok := cm.InitialLeafMap[targetState]; ok {
+			resolvedTarget = leaf
+		}
 	}
 
 	// 2. Build event (ID used as causation metadata for activities).
@@ -239,6 +262,12 @@ func (e *Engine) commitTransition(
 	lca, _ := cm.LCA(sourceLeaf, resolvedTarget)
 	exitSeq := computeExitSequence(sourceLeaf, lca, cm.Ancestry)
 	entrySeq := computeEntrySequence(lca, resolvedTarget, cm.Ancestry)
+
+	// 3b. Record history for all compound states in the exit sequence.
+	// Must happen after exitSeq is computed, before tx.Begin, so that a tx rollback
+	// on exit activity failure leaves history unrecorded (exit was not completed).
+	// Uses copy-on-write to avoid aliasing the stored map in memstore.
+	recordHistory(instance, sourceLeaf, exitSeq, cm.Definition)
 
 	actInput := types.ActivityInput{
 		WorkflowType:  cm.Definition.WorkflowType,
@@ -369,6 +398,8 @@ func (e *Engine) createInstance(
 		AggregateID:     aggregateID,
 		CurrentState:    initialState,
 		StateData:       make(map[string]any),
+		ShallowHistory:  make(map[string]string),
+		DeepHistory:     make(map[string]string),
 		CorrelationID:   generateID(),
 		CreatedAt:       now,
 		UpdatedAt:       now,
@@ -443,11 +474,13 @@ func (e *Engine) ForceState(ctx context.Context, aggregateType, aggregateID, tar
 		CreatedAt:       now,
 	}
 
-	// Update instance
+	// Update instance — clear history maps (admin recovery resets state from scratch).
 	instance.LastReadUpdatedAt = instance.UpdatedAt // snapshot for optimistic locking
 	instance.CurrentState = targetState
 	instance.IsStuck = false
 	instance.StuckReason = ""
+	instance.ShallowHistory = make(map[string]string)
+	instance.DeepHistory = make(map[string]string)
 	instance.UpdatedAt = now
 
 	// Transaction: persist

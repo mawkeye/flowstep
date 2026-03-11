@@ -5,6 +5,27 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [v0.10.0] - 2026-03-11
+
+### Added
+- **History states** — shallow and deep history for resuming previous state within compound states. When re-entering a compound state via a history-aware transition, the engine resolves to the last-visited child (shallow `[H]`) or leaf (deep `[H*]`) instead of the default `InitialChild`. (Task 4: History States)
+- `HistoryMode` type in `types/` with `HistoryShallow` and `HistoryDeep` constants
+- `WithHistory(mode HistoryMode)` transition option in builder DSL
+- `WorkflowInstance.ShallowHistory` and `DeepHistory` map fields for persisting history across transitions
+- Auto-recording of history on every compound state exit — no opt-in required
+- Fallback to `InitialChild` when no history is recorded (backward-compatible)
+- `ForceState()` clears both history maps (admin recovery resets from scratch)
+- Mermaid history annotation: `[H]` suffix for shallow, `[H*]` for deep history transitions
+- `pgxstore` migration `002_history_states.sql` — adds `shallow_history` and `deep_history` JSONB columns
+- `sqlitestore` migration `002_history_states.sql` — adds `shallow_history` and `deep_history` TEXT columns
+- Root package exports: `HistoryMode`, `HistoryShallow`, `HistoryDeep`, `WithHistory`
+
+### Changed
+- `computeHash()` includes `TransitionDef.HistoryMode` for dedup correctness
+- `pgxstore` Create/Get/Update/ListStuck handle history columns
+- `sqlitestore` Create/Get/Update/ListStuck handle history columns
+- `dynamostore` requires no changes — `attributevalue.MarshalMap` handles new struct fields automatically
+
 ## [v0.9.0] - 2026-03-11
 
 ### Added

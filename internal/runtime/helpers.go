@@ -131,6 +131,45 @@ func collectSubtreeStates(roots []string, def *types.Definition) []string {
 	return result
 }
 
+// recordHistory records the last-active child (ShallowHistory) and last leaf (DeepHistory)
+// for every compound state in exitSeq. Uses copy-on-write to avoid aliasing the stored
+// instance map when memstore returns a struct copy whose map header shares underlying data.
+func recordHistory(instance *types.WorkflowInstance, sourceLeaf string, exitSeq []string, def *types.Definition) {
+	for _, stateName := range exitSeq {
+		st := def.States[stateName]
+		if !st.IsCompound {
+			continue
+		}
+		// Find the direct child of stateName that is also in the exit path.
+		directChild := ""
+		for _, s := range exitSeq {
+			if def.States[s].Parent == stateName {
+				directChild = s
+				break
+			}
+		}
+		if directChild == "" {
+			continue
+		}
+
+		// ShallowHistory: copy-on-write — build a new map.
+		newShallow := make(map[string]string, len(instance.ShallowHistory)+1)
+		for k, v := range instance.ShallowHistory {
+			newShallow[k] = v
+		}
+		newShallow[stateName] = directChild
+		instance.ShallowHistory = newShallow
+
+		// DeepHistory: copy-on-write — build a new map.
+		newDeep := make(map[string]string, len(instance.DeepHistory)+1)
+		for k, v := range instance.DeepHistory {
+			newDeep[k] = v
+		}
+		newDeep[stateName] = sourceLeaf
+		instance.DeepHistory = newDeep
+	}
+}
+
 func copyMap(m map[string]any) map[string]any {
 	if m == nil {
 		return nil

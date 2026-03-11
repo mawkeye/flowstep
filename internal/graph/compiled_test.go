@@ -823,3 +823,32 @@ func TestCompile_DefinitionHash_DiffersOnEntryExitActivity(t *testing.T) {
 		t.Error("definitions differing in EntryActivity should produce different hashes")
 	}
 }
+
+// TestCompile_DefinitionHash_DiffersOnHistoryMode verifies that computeHash includes
+// TransitionDef.HistoryMode so that two definitions identical except for HistoryMode
+// produce different hashes (preventing incorrect deduplication in Register).
+func TestCompile_DefinitionHash_DiffersOnHistoryMode(t *testing.T) {
+	base := types.TransitionDef{Name: "go", Sources: []string{"A"}, Target: "B"}
+	withHistory := base
+	withHistory.HistoryMode = types.HistoryShallow
+
+	def1 := &types.Definition{
+		AggregateType: "order", WorkflowType: "wf", Version: 1,
+		States:         map[string]types.StateDef{"A": {Name: "A", IsInitial: true}, "B": {Name: "B", IsTerminal: true}},
+		Transitions:    map[string]types.TransitionDef{"go": base},
+		InitialState:   "A",
+		TerminalStates: []string{"B"},
+	}
+	def2 := &types.Definition{
+		AggregateType: "order", WorkflowType: "wf", Version: 1,
+		States:         map[string]types.StateDef{"A": {Name: "A", IsInitial: true}, "B": {Name: "B", IsTerminal: true}},
+		Transitions:    map[string]types.TransitionDef{"go": withHistory},
+		InitialState:   "A",
+		TerminalStates: []string{"B"},
+	}
+	cm1, _ := Compile(def1, Sentinels{})
+	cm2, _ := Compile(def2, Sentinels{})
+	if cm1.DefinitionHash == cm2.DefinitionHash {
+		t.Error("definitions differing only in HistoryMode should produce different hashes")
+	}
+}

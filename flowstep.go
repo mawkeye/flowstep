@@ -12,6 +12,15 @@ type (
 	StateOption       = builder.StateOption
 	StateModifier     = builder.StateModifier
 	PostCommitWarning = types.PostCommitWarning
+
+	// HistoryMode determines how a compound state restores its last-active child.
+	HistoryMode = types.HistoryMode
+)
+
+// History mode constants — re-exported for the public API.
+const (
+	HistoryShallow = types.HistoryShallow
+	HistoryDeep    = types.HistoryDeep
 )
 
 // Re-export builder functions for the fluent API.
@@ -46,6 +55,9 @@ var (
 	InitialChild     = builder.InitialChild
 	EntryActivityOpt = builder.EntryActivityOpt
 	ExitActivityOpt  = builder.ExitActivityOpt
+
+	// WithHistory marks a transition as history-aware (shallow or deep).
+	WithHistory = builder.WithHistory
 )
 
 // Define starts building a workflow definition.

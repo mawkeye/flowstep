@@ -173,29 +173,90 @@ func DispatchAndWait(name string) TransitionOption {
 	}
 }
 
+// StateModifier is a functional option that configures a state's properties.
+// Used with State(), WaitState(), Terminal(), and CompoundState().
+type StateModifier func(*types.StateDef)
+
+// Parent sets the parent compound state for a child state.
+func Parent(parentName string) StateModifier {
+	return func(sd *types.StateDef) {
+		sd.Parent = parentName
+	}
+}
+
+// InitialChild sets the initial child state for a compound state.
+func InitialChild(childName string) StateModifier {
+	return func(sd *types.StateDef) {
+		sd.InitialChild = childName
+	}
+}
+
+// EntryActivityOpt sets the activity to execute synchronously when entering this state.
+func EntryActivityOpt(name string) StateModifier {
+	return func(sd *types.StateDef) {
+		sd.EntryActivity = name
+	}
+}
+
+// ExitActivityOpt sets the activity to execute synchronously when exiting this state.
+func ExitActivityOpt(name string) StateModifier {
+	return func(sd *types.StateDef) {
+		sd.ExitActivity = name
+	}
+}
+
 // StateOption configures a state.
 type StateOption struct {
 	def types.StateDef
 }
 
-// Initial creates an initial state.
+// Def returns the StateDef for this state option.
+func (so StateOption) Def() types.StateDef {
+	return so.def
+}
+
+// Initial creates an initial state. Does not accept StateModifier — the
+// top-level initial state must be a root-level leaf.
 func Initial(name string) StateOption {
 	return StateOption{def: types.StateDef{Name: name, IsInitial: true}}
 }
 
 // Terminal creates a terminal state.
-func Terminal(name string) StateOption {
-	return StateOption{def: types.StateDef{Name: name, IsTerminal: true}}
+func Terminal(name string, mods ...StateModifier) StateOption {
+	sd := types.StateDef{Name: name, IsTerminal: true}
+	for _, m := range mods {
+		m(&sd)
+	}
+	return StateOption{def: sd}
 }
 
 // State creates an intermediate state.
-func State(name string) StateOption {
-	return StateOption{def: types.StateDef{Name: name}}
+func State(name string, mods ...StateModifier) StateOption {
+	sd := types.StateDef{Name: name}
+	for _, m := range mods {
+		m(&sd)
+	}
+	return StateOption{def: sd}
 }
 
 // WaitState creates a wait state (for pending tasks).
-func WaitState(name string) StateOption {
-	return StateOption{def: types.StateDef{Name: name, IsWait: true}}
+func WaitState(name string, mods ...StateModifier) StateOption {
+	sd := types.StateDef{Name: name, IsWait: true}
+	for _, m := range mods {
+		m(&sd)
+	}
+	return StateOption{def: sd}
+}
+
+// CompoundState creates a compound state (a state that contains child states).
+// It auto-sets IsCompound = true. Use InitialChild() to specify which child
+// state the workflow enters when this compound state is entered.
+func CompoundState(name string, mods ...StateModifier) StateOption {
+	sd := types.StateDef{Name: name, IsCompound: true}
+	for _, m := range mods {
+		m(&sd)
+	}
+	return StateOption{def: sd}
 }
 
 // ValidateFn is called by Build() to validate the assembled Definition.
@@ -267,6 +328,21 @@ func (b *DefBuilder) Build() (*types.Definition, error) {
 		if so.def.IsTerminal {
 			def.TerminalStates = append(def.TerminalStates, so.def.Name)
 		}
+	}
+
+	// Wire Children from Parent references and auto-set IsCompound.
+	// Iterate all states: for each state with a Parent, append it to its parent's Children.
+	for name, st := range def.States {
+		if st.Parent == "" {
+			continue
+		}
+		parent, ok := def.States[st.Parent]
+		if !ok {
+			continue // validation will catch orphaned children
+		}
+		parent.Children = append(parent.Children, name)
+		parent.IsCompound = true
+		def.States[st.Parent] = parent
 	}
 
 	// Collect transitions (detect duplicates)

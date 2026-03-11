@@ -49,6 +49,10 @@ type Engine struct {
 	compiled       map[string]map[int]*graph.CompiledMachine // key: aggregateType -> version -> cm
 	latestCompiled map[string]*graph.CompiledMachine         // key: aggregateType -> latest cm
 
+	// hasSavepoints is true when deps.TxProvider also implements types.SavepointProvider.
+	// Detected once in New() via type assertion.
+	hasSavepoints bool
+
 	mu       sync.RWMutex
 	shutdown atomic.Bool
 	wg       sync.WaitGroup
@@ -56,12 +60,14 @@ type Engine struct {
 
 // New creates a new Engine with the given dependencies.
 func New(deps Deps) *Engine {
+	_, hasSP := deps.TxProvider.(types.SavepointProvider)
 	return &Engine{
 		deps:           deps,
 		versions:       make(map[string]map[int]*types.Definition),
 		latest:         make(map[string]*types.Definition),
 		compiled:       make(map[string]map[int]*graph.CompiledMachine),
 		latestCompiled: make(map[string]*graph.CompiledMachine),
+		hasSavepoints:  hasSP,
 	}
 }
 

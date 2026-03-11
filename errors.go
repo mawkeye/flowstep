@@ -46,7 +46,10 @@ var (
 
 // Graph compilation errors.
 var (
-	ErrSpawnCycle = errors.New("flowstep: cross-workflow spawn cycle detected")
+	ErrSpawnCycle                  = errors.New("flowstep: cross-workflow spawn cycle detected")
+	ErrCompoundStateNoInitialChild = errors.New("flowstep: compound state has no InitialChild")
+	ErrOrphanedChild               = errors.New("flowstep: state references non-existent parent")
+	ErrCircularHierarchy           = errors.New("flowstep: circular parent-child hierarchy detected")
 )
 
 // Activity errors.

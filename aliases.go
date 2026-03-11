@@ -37,10 +37,23 @@ type (
 	// ActivityRunner dispatches activity invocations for async execution.
 	ActivityRunner = types.ActivityRunner
 
+	// ActivityResolver is an optional extension of ActivityRunner for synchronous name-based resolution.
+	// Implement this on your ActivityRunner to enable entry/exit activity execution.
+	ActivityResolver = types.ActivityResolver
+
 	// Activity performs non-deterministic work outside the workflow transaction.
 	// Can contain any code: API calls, DB writes, file I/O, network requests.
 	// flowstep does NOT recover or replay activity state on failure.
 	Activity = types.Activity
+
+	// SavepointProvider is an optional extension of TxProvider for databases that support savepoints.
+	// Implement this alongside TxProvider to enable rollback-to-stable on entry activity failures.
+	SavepointProvider = types.SavepointProvider
+
+	// TaskInvalidator is an optional extension of TaskStore for cancelling dangling tasks
+	// when a hierarchical state subtree is exited. Implement this on your TaskStore to enable
+	// automatic cancellation of pending tasks whose wait state is no longer active.
+	TaskInvalidator = types.TaskInvalidator
 
 	// Clock provides deterministic time for the engine.
 	Clock = types.Clock

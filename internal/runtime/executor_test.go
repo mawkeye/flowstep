@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/mawkeye/flowstep/internal/graph"
 	"github.com/mawkeye/flowstep/types"
@@ -296,5 +297,576 @@ func TestValidateTransition_alreadyTerminal(t *testing.T) {
 	_, _, err := e.validateTransition(context.Background(), cm, inst, "complete", nil)
 	if !errors.Is(err, errAlreadyTerminal) {
 		t.Errorf("expected ErrAlreadyTerminal, got %v", err)
+	}
+}
+
+// ─── Event bubbling tests ──────────────────────────────────────────────────────
+
+// bubblingDef builds a hierarchical definition where "approve" is defined on parent PROCESSING,
+// not on the leaf VALIDATING. Tests event bubbling from VALIDATING → PROCESSING.
+func bubblingDef() *types.Definition {
+	return &types.Definition{
+		WorkflowType:  "order",
+		AggregateType: "TestAgg",
+		Version:       1,
+		InitialState:  "CREATED",
+		TerminalStates: []string{"APPROVED"},
+		States: map[string]types.StateDef{
+			"CREATED":    {Name: "CREATED", IsInitial: true},
+			"PROCESSING": {Name: "PROCESSING", IsCompound: true, InitialChild: "VALIDATING", Children: []string{"VALIDATING", "APPROVED"}},
+			"VALIDATING": {Name: "VALIDATING", Parent: "PROCESSING"},
+			"APPROVED":   {Name: "APPROVED", Parent: "PROCESSING", IsTerminal: true},
+		},
+		Transitions: map[string]types.TransitionDef{
+			"start":   {Name: "start", Sources: []string{"CREATED"}, Target: "PROCESSING"},
+			"approve": {Name: "approve", Sources: []string{"PROCESSING"}, Target: "APPROVED"},
+		},
+	}
+}
+
+func TestValidateTransition_EventBubbling_ParentStateHandles(t *testing.T) {
+	e := newTestEngine(newMemInstanceStore(errInstanceNotFound))
+	cm := compileDef(t, bubblingDef())
+	// Instance is at leaf VALIDATING; "approve" is defined on parent PROCESSING
+	inst := simpleInstance("VALIDATING")
+	inst.WorkflowType = "order"
+
+	ct, target, err := e.validateTransition(context.Background(), cm, inst, "approve", nil)
+	if err != nil {
+		t.Fatalf("validateTransition with event bubbling failed: %v", err)
+	}
+	if ct.Def.Name != "approve" {
+		t.Errorf("compiled transition name = %q, want approve", ct.Def.Name)
+	}
+	if target != "APPROVED" {
+		t.Errorf("target = %q, want APPROVED", target)
+	}
+}
+
+func TestValidateTransition_EventBubbling_LeafHandlesDirect(t *testing.T) {
+	// When the leaf itself has the transition, it fires directly (no bubbling).
+	def := &types.Definition{
+		WorkflowType:  "order",
+		AggregateType: "TestAgg",
+		Version:       1,
+		InitialState:  "CREATED",
+		TerminalStates: []string{"APPROVED"},
+		States: map[string]types.StateDef{
+			"CREATED":    {Name: "CREATED", IsInitial: true},
+			"PROCESSING": {Name: "PROCESSING", IsCompound: true, InitialChild: "VALIDATING", Children: []string{"VALIDATING", "APPROVED"}},
+			"VALIDATING": {Name: "VALIDATING", Parent: "PROCESSING"},
+			"APPROVED":   {Name: "APPROVED", Parent: "PROCESSING", IsTerminal: true},
+		},
+		Transitions: map[string]types.TransitionDef{
+			"start":   {Name: "start", Sources: []string{"CREATED"}, Target: "PROCESSING"},
+			// "approve" is on VALIDATING directly (leaf handles it)
+			"approve": {Name: "approve", Sources: []string{"VALIDATING"}, Target: "APPROVED"},
+		},
+	}
+	e := newTestEngine(newMemInstanceStore(errInstanceNotFound))
+	cm := compileDef(t, def)
+	inst := simpleInstance("VALIDATING")
+	inst.WorkflowType = "order"
+
+	ct, target, err := e.validateTransition(context.Background(), cm, inst, "approve", nil)
+	if err != nil {
+		t.Fatalf("validateTransition direct (no bubble) failed: %v", err)
+	}
+	if ct.Def.Name != "approve" {
+		t.Errorf("compiled transition name = %q, want approve", ct.Def.Name)
+	}
+	if target != "APPROVED" {
+		t.Errorf("target = %q, want APPROVED", target)
+	}
+}
+
+func TestValidateTransition_EventBubbling_NeitherLeafNorAncestor_Fails(t *testing.T) {
+	e := newTestEngine(newMemInstanceStore(errInstanceNotFound))
+	cm := compileDef(t, bubblingDef())
+	// Instance is at leaf VALIDATING; "start" transition is only on CREATED (unrelated)
+	inst := simpleInstance("VALIDATING")
+	inst.WorkflowType = "order"
+
+	_, _, err := e.validateTransition(context.Background(), cm, inst, "start", nil)
+	if !errors.Is(err, errInvalidTransition) {
+		t.Errorf("expected ErrInvalidTransition when no ancestor handles event, got %v", err)
+	}
+}
+
+// ─── Task 7: exit/entry sequences + compound resolution tests ─────────────────
+
+// recordingResolver implements ActivityRunner + ActivityResolver, recording call order.
+type recordingResolver struct {
+	order  []string
+	failOn string
+}
+
+func (r *recordingResolver) Dispatch(_ context.Context, _ types.ActivityInvocation) error {
+	return nil
+}
+func (r *recordingResolver) Resolve(name string) (types.Activity, bool) {
+	return &callbackActivity{name: name, recorder: r}, true
+}
+
+type callbackActivity struct {
+	name     string
+	recorder *recordingResolver
+}
+
+func (a *callbackActivity) Name() string { return a.name }
+func (a *callbackActivity) Execute(_ context.Context, _ types.ActivityInput) (*types.ActivityResult, error) {
+	a.recorder.order = append(a.recorder.order, a.name)
+	if a.name == a.recorder.failOn {
+		return nil, errors.New("activity failed: " + a.name)
+	}
+	return &types.ActivityResult{}, nil
+}
+
+// activityHierarchyDef: CREATED→PROCESSING(compound)→VALIDATING(leaf)|APPROVED(leaf,terminal)
+// "approve" on PROCESSING bubbles from VALIDATING.
+func activityHierarchyDef() *types.Definition {
+	return &types.Definition{
+		WorkflowType:   "order",
+		AggregateType:  "TestAgg",
+		Version:        1,
+		InitialState:   "CREATED",
+		TerminalStates: []string{"APPROVED"},
+		States: map[string]types.StateDef{
+			"CREATED": {Name: "CREATED", IsInitial: true, ExitActivity: "on_exit_created"},
+			"PROCESSING": {
+				Name: "PROCESSING", IsCompound: true,
+				InitialChild: "VALIDATING", Children: []string{"VALIDATING", "APPROVED"},
+				EntryActivity: "on_enter_processing", ExitActivity: "on_exit_processing",
+			},
+			"VALIDATING": {Name: "VALIDATING", Parent: "PROCESSING",
+				EntryActivity: "on_enter_validating", ExitActivity: "on_exit_validating"},
+			"APPROVED": {Name: "APPROVED", Parent: "PROCESSING", IsTerminal: true,
+				EntryActivity: "on_enter_approved"},
+		},
+		Transitions: map[string]types.TransitionDef{
+			"start":   {Name: "start", Sources: []string{"CREATED"}, Target: "PROCESSING"},
+			"approve": {Name: "approve", Sources: []string{"PROCESSING"}, Target: "APPROVED"},
+		},
+	}
+}
+
+func newHierarchyEngine(is types.InstanceStore, runner types.ActivityRunner) *Engine {
+	return New(Deps{
+		EventStore:           &noopEventStore{},
+		InstanceStore:        is,
+		TxProvider:           &noopTx{},
+		Clock:                &fixedClock{t: time.Now()},
+		ActivityRunner:       runner,
+		ErrInstanceNotFound:  errInstanceNotFound,
+		ErrInvalidTransition: errInvalidTransition,
+		ErrAlreadyTerminal:   errAlreadyTerminal,
+		ErrGuardFailed:       errGuardFailed,
+		ErrNoMatchingRoute:   errNoMatchingRoute,
+		ErrEngineShutdown:    errEngineShutdown,
+		Sentinels: graph.Sentinels{
+			ErrNoInitialState:              errors.New("no initial"),
+			ErrNoTerminalStates:            errors.New("no terminal"),
+			ErrDeadEndState:                errors.New("dead end"),
+			ErrUnreachableState:            errors.New("unreachable"),
+			ErrUnknownState:                errors.New("unknown"),
+			ErrMissingDefault:              errors.New("missing default"),
+			ErrDuplicateTransition:         errors.New("duplicate"),
+			ErrSpawnCycle:                  errSpawnCycle,
+			ErrCompoundStateNoInitialChild: errors.New("compound no initial"),
+			ErrOrphanedChild:               errors.New("orphaned"),
+			ErrCircularHierarchy:           errors.New("circular"),
+		},
+	})
+}
+
+func TestCreateInstance_CompoundInitialState_ResolvesToLeaf(t *testing.T) {
+	is := newMemInstanceStore(errInstanceNotFound)
+	e := newHierarchyEngine(is, &recordingResolver{})
+
+	// Build a CompiledMachine where InitialState is compound and InitialLeafMap maps it to a leaf.
+	cm := &graph.CompiledMachine{
+		Definition: &types.Definition{
+			WorkflowType:  "order",
+			AggregateType: "TestAgg",
+			Version:       1,
+			InitialState:  "PROCESSING", // compound — must resolve to VALIDATING
+			States: map[string]types.StateDef{
+				"PROCESSING": {Name: "PROCESSING", IsCompound: true, IsInitial: true,
+					InitialChild: "VALIDATING", Children: []string{"VALIDATING"}},
+				"VALIDATING": {Name: "VALIDATING", Parent: "PROCESSING"},
+			},
+		},
+		InitialLeafMap: map[string]string{"PROCESSING": "VALIDATING"},
+	}
+
+	inst, err := e.createInstance(context.Background(), cm, "TestAgg", "agg-compound")
+	if err != nil {
+		t.Fatalf("createInstance: %v", err)
+	}
+	if inst.CurrentState != "VALIDATING" {
+		t.Errorf("CurrentState = %q, want VALIDATING (resolved from compound PROCESSING)", inst.CurrentState)
+	}
+}
+
+func TestCommitTransition_CompoundTarget_ResolvesToLeaf(t *testing.T) {
+	is := newMemInstanceStore(errInstanceNotFound)
+	recorder := &recordingResolver{}
+	e := newHierarchyEngine(is, recorder)
+	if err := e.Register(activityHierarchyDef()); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	inst := simpleInstance("CREATED")
+	inst.WorkflowType = "order"
+	inst.WorkflowVersion = 1
+	is.instances[is.key(inst.AggregateType, inst.AggregateID)] = inst
+
+	result, err := e.Transition(context.Background(), "TestAgg", "agg-1", "start", "actor", nil)
+	if err != nil {
+		t.Fatalf("Transition error: %v", err)
+	}
+	if result.NewState != "VALIDATING" {
+		t.Errorf("NewState = %q, want VALIDATING (resolved leaf of PROCESSING)", result.NewState)
+	}
+	if result.Instance.CurrentState != "VALIDATING" {
+		t.Errorf("Instance.CurrentState = %q, want VALIDATING", result.Instance.CurrentState)
+	}
+}
+
+func TestCommitTransition_ExitEntry_ActivitiesFire_InOrder(t *testing.T) {
+	is := newMemInstanceStore(errInstanceNotFound)
+	recorder := &recordingResolver{}
+	e := newHierarchyEngine(is, recorder)
+	if err := e.Register(activityHierarchyDef()); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	// Instance already at VALIDATING (leaf of PROCESSING)
+	inst := simpleInstance("VALIDATING")
+	inst.WorkflowType = "order"
+	inst.WorkflowVersion = 1
+	is.instances[is.key(inst.AggregateType, inst.AggregateID)] = inst
+
+	_, err := e.Transition(context.Background(), "TestAgg", "agg-1", "approve", "actor", nil)
+	if err != nil {
+		t.Fatalf("Transition error: %v", err)
+	}
+	// LCA(VALIDATING,APPROVED)=PROCESSING: exit [VALIDATING], entry [APPROVED]
+	want := []string{"on_exit_validating", "on_enter_approved"}
+	if len(recorder.order) != len(want) {
+		t.Fatalf("activity order = %v, want %v", recorder.order, want)
+	}
+	for i, w := range want {
+		if recorder.order[i] != w {
+			t.Errorf("activity[%d] = %q, want %q", i, recorder.order[i], w)
+		}
+	}
+}
+
+func TestCommitTransition_StartTransition_EntryActivitiesFire_FullPath(t *testing.T) {
+	is := newMemInstanceStore(errInstanceNotFound)
+	recorder := &recordingResolver{}
+	e := newHierarchyEngine(is, recorder)
+	if err := e.Register(activityHierarchyDef()); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	inst := simpleInstance("CREATED")
+	inst.WorkflowType = "order"
+	inst.WorkflowVersion = 1
+	is.instances[is.key(inst.AggregateType, inst.AggregateID)] = inst
+
+	_, err := e.Transition(context.Background(), "TestAgg", "agg-1", "start", "actor", nil)
+	if err != nil {
+		t.Fatalf("Transition error: %v", err)
+	}
+	// LCA(CREATED,VALIDATING)="": exit [CREATED], entry [PROCESSING, VALIDATING]
+	want := []string{"on_exit_created", "on_enter_processing", "on_enter_validating"}
+	if len(recorder.order) != len(want) {
+		t.Fatalf("activity order = %v, want %v", recorder.order, want)
+	}
+	for i, w := range want {
+		if recorder.order[i] != w {
+			t.Errorf("activity[%d] = %q, want %q", i, recorder.order[i], w)
+		}
+	}
+}
+
+func TestCommitTransition_ExitActivityFailure_AbortsTransition(t *testing.T) {
+	is := newMemInstanceStore(errInstanceNotFound)
+	recorder := &recordingResolver{failOn: "on_exit_validating"}
+	e := newHierarchyEngine(is, recorder)
+	if err := e.Register(activityHierarchyDef()); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	inst := simpleInstance("VALIDATING")
+	inst.WorkflowType = "order"
+	inst.WorkflowVersion = 1
+	is.instances[is.key(inst.AggregateType, inst.AggregateID)] = inst
+
+	_, err := e.Transition(context.Background(), "TestAgg", "agg-1", "approve", "actor", nil)
+	if err == nil {
+		t.Fatal("expected error from exit activity failure, got nil")
+	}
+	// Instance state must remain at VALIDATING (source leaf)
+	got, _ := is.Get(context.Background(), "TestAgg", "agg-1")
+	if got.CurrentState != "VALIDATING" {
+		t.Errorf("CurrentState = %q after exit failure, want VALIDATING", got.CurrentState)
+	}
+}
+
+func TestCommitTransition_EntryActivityFailure_MarksStuck_SourceLeafPreserved(t *testing.T) {
+	is := newMemInstanceStore(errInstanceNotFound)
+	recorder := &recordingResolver{failOn: "on_enter_approved"}
+	e := newHierarchyEngine(is, recorder)
+	if err := e.Register(activityHierarchyDef()); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	inst := simpleInstance("VALIDATING")
+	inst.WorkflowType = "order"
+	inst.WorkflowVersion = 1
+	is.instances[is.key(inst.AggregateType, inst.AggregateID)] = inst
+
+	_, err := e.Transition(context.Background(), "TestAgg", "agg-1", "approve", "actor", nil)
+	if err == nil {
+		t.Fatal("expected error from entry activity failure, got nil")
+	}
+	got, _ := is.Get(context.Background(), "TestAgg", "agg-1")
+	if got.CurrentState != "VALIDATING" {
+		t.Errorf("CurrentState = %q, want VALIDATING (source leaf preserved)", got.CurrentState)
+	}
+	if !got.IsStuck {
+		t.Error("IsStuck should be true after entry activity failure")
+	}
+}
+
+func TestForceState_CompoundTarget_ResolvesToLeaf(t *testing.T) {
+	is := newMemInstanceStore(errInstanceNotFound)
+	e := newHierarchyEngine(is, nil)
+	if err := e.Register(activityHierarchyDef()); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	inst := simpleInstance("APPROVED")
+	inst.WorkflowType = "order"
+	inst.WorkflowVersion = 1
+	is.instances[is.key(inst.AggregateType, inst.AggregateID)] = inst
+
+	result, err := e.ForceState(context.Background(), "TestAgg", "agg-1", "PROCESSING", "admin", "recovery")
+	if err != nil {
+		t.Fatalf("ForceState error: %v", err)
+	}
+	if result.NewState != "VALIDATING" {
+		t.Errorf("ForceState NewState = %q, want VALIDATING (resolved leaf)", result.NewState)
+	}
+}
+
+// ─── Task 8: dangling task cleanup tests ──────────────────────────────────────
+
+// trackingTaskStore implements types.TaskStore + types.TaskInvalidator.
+// Stores tasks in a map and records InvalidateByStates calls.
+type trackingTaskStore struct {
+	tasks           map[string]types.PendingTask
+	invalidatedArgs []invalidateCall
+}
+
+type invalidateCall struct {
+	aggType, aggID string
+	states         []string
+}
+
+func newTrackingTaskStore() *trackingTaskStore {
+	return &trackingTaskStore{tasks: make(map[string]types.PendingTask)}
+}
+
+func (s *trackingTaskStore) Create(_ context.Context, _ any, task types.PendingTask) error {
+	s.tasks[task.ID] = task
+	return nil
+}
+func (s *trackingTaskStore) Get(_ context.Context, id string) (*types.PendingTask, error) {
+	t, ok := s.tasks[id]
+	if !ok {
+		return nil, errors.New("not found")
+	}
+	cp := t
+	return &cp, nil
+}
+func (s *trackingTaskStore) GetByAggregate(_ context.Context, _, _ string) ([]types.PendingTask, error) {
+	return nil, nil
+}
+func (s *trackingTaskStore) Complete(_ context.Context, _ any, taskID, choice, actor string) error {
+	t, ok := s.tasks[taskID]
+	if !ok {
+		return errors.New("not found")
+	}
+	t.Status = types.TaskStatusCompleted
+	t.Choice = choice
+	t.CompletedBy = actor
+	s.tasks[taskID] = t
+	return nil
+}
+func (s *trackingTaskStore) ListPending(_ context.Context) ([]types.PendingTask, error) {
+	return nil, nil
+}
+func (s *trackingTaskStore) ListExpired(_ context.Context) ([]types.PendingTask, error) {
+	return nil, nil
+}
+
+// InvalidateByStates — implements types.TaskInvalidator.
+func (s *trackingTaskStore) InvalidateByStates(_ context.Context, _ any, aggType, aggID string, states []string) error {
+	s.invalidatedArgs = append(s.invalidatedArgs, invalidateCall{aggType, aggID, states})
+	stateSet := make(map[string]bool, len(states))
+	for _, st := range states {
+		stateSet[st] = true
+	}
+	for id, t := range s.tasks {
+		if t.AggregateType == aggType && t.AggregateID == aggID &&
+			t.Status == types.TaskStatusPending && stateSet[t.State] {
+			t.Status = types.TaskStatusCancelled
+			s.tasks[id] = t
+		}
+	}
+	return nil
+}
+
+// noopTaskStore implements types.TaskStore but NOT types.TaskInvalidator.
+type noopTaskStore struct{}
+
+func (n *noopTaskStore) Create(_ context.Context, _ any, _ types.PendingTask) error { return nil }
+func (n *noopTaskStore) Get(_ context.Context, _ string) (*types.PendingTask, error) {
+	return nil, errors.New("not found")
+}
+func (n *noopTaskStore) GetByAggregate(_ context.Context, _, _ string) ([]types.PendingTask, error) {
+	return nil, nil
+}
+func (n *noopTaskStore) Complete(_ context.Context, _ any, _, _, _ string) error { return nil }
+func (n *noopTaskStore) ListPending(_ context.Context) ([]types.PendingTask, error) {
+	return nil, nil
+}
+func (n *noopTaskStore) ListExpired(_ context.Context) ([]types.PendingTask, error) {
+	return nil, nil
+}
+
+func newHierarchyEngineWithTasks(is types.InstanceStore, runner types.ActivityRunner, ts types.TaskStore) *Engine {
+	return New(Deps{
+		EventStore:           &noopEventStore{},
+		InstanceStore:        is,
+		TxProvider:           &noopTx{},
+		Clock:                &fixedClock{t: time.Now()},
+		ActivityRunner:       runner,
+		TaskStore:            ts,
+		ErrInstanceNotFound:  errInstanceNotFound,
+		ErrInvalidTransition: errInvalidTransition,
+		ErrAlreadyTerminal:   errAlreadyTerminal,
+		ErrGuardFailed:       errGuardFailed,
+		ErrNoMatchingRoute:   errNoMatchingRoute,
+		ErrEngineShutdown:    errEngineShutdown,
+		Sentinels: graph.Sentinels{
+			ErrNoInitialState:              errors.New("no initial"),
+			ErrNoTerminalStates:            errors.New("no terminal"),
+			ErrDeadEndState:                errors.New("dead end"),
+			ErrUnreachableState:            errors.New("unreachable"),
+			ErrUnknownState:                errors.New("unknown"),
+			ErrMissingDefault:              errors.New("missing default"),
+			ErrDuplicateTransition:         errors.New("duplicate"),
+			ErrSpawnCycle:                  errSpawnCycle,
+			ErrCompoundStateNoInitialChild: errors.New("compound no initial"),
+			ErrOrphanedChild:               errors.New("orphaned"),
+			ErrCircularHierarchy:           errors.New("circular"),
+		},
+	})
+}
+
+func TestCommitTransition_DanglingTaskCleanup_CancelsTaskInExitedState(t *testing.T) {
+	is := newMemInstanceStore(errInstanceNotFound)
+	ts := newTrackingTaskStore()
+	e := newHierarchyEngineWithTasks(is, nil, ts)
+	if err := e.Register(activityHierarchyDef()); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	// Instance is at VALIDATING (leaf of PROCESSING).
+	inst := simpleInstance("VALIDATING")
+	inst.WorkflowType = "order"
+	inst.WorkflowVersion = 1
+	is.instances[is.key(inst.AggregateType, inst.AggregateID)] = inst
+
+	// Pre-create a pending task for the VALIDATING state.
+	pendingTask := types.PendingTask{
+		ID:            "task-1",
+		WorkflowType:  "order",
+		AggregateType: inst.AggregateType,
+		AggregateID:   inst.AggregateID,
+		State:         "VALIDATING",
+		Status:        types.TaskStatusPending,
+	}
+	_ = ts.Create(context.Background(), nil, pendingTask)
+
+	// Transition "approve" exits VALIDATING → enters APPROVED.
+	_, err := e.Transition(context.Background(), "TestAgg", "agg-1", "approve", "actor", nil)
+	if err != nil {
+		t.Fatalf("Transition error: %v", err)
+	}
+
+	// The VALIDATING task should now be CANCELLED.
+	got, _ := ts.Get(context.Background(), "task-1")
+	if got.Status != types.TaskStatusCancelled {
+		t.Errorf("task status = %q, want CANCELLED", got.Status)
+	}
+}
+
+func TestCommitTransition_DanglingTaskCleanup_NoTaskInvalidator_DegradeGracefully(t *testing.T) {
+	is := newMemInstanceStore(errInstanceNotFound)
+	e := newHierarchyEngineWithTasks(is, nil, &noopTaskStore{})
+	if err := e.Register(activityHierarchyDef()); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	inst := simpleInstance("VALIDATING")
+	inst.WorkflowType = "order"
+	inst.WorkflowVersion = 1
+	is.instances[is.key(inst.AggregateType, inst.AggregateID)] = inst
+
+	// noopTaskStore does not implement TaskInvalidator; the transition must still succeed.
+	result, err := e.Transition(context.Background(), "TestAgg", "agg-1", "approve", "actor", nil)
+	if err != nil {
+		t.Fatalf("Transition error (expected graceful degradation): %v", err)
+	}
+	if result.NewState != "APPROVED" {
+		t.Errorf("NewState = %q, want APPROVED", result.NewState)
+	}
+}
+
+func TestValidateTransition_EventBubbling_GrandparentHandles(t *testing.T) {
+	// 3-level: ROOT (compound) → ORDER (compound) → VALIDATING (leaf)
+	// "approve" is on ROOT; current state is VALIDATING
+	def := &types.Definition{
+		WorkflowType:  "order",
+		AggregateType: "TestAgg",
+		Version:       1,
+		InitialState:  "CREATED",
+		TerminalStates: []string{"APPROVED"},
+		States: map[string]types.StateDef{
+			"CREATED":    {Name: "CREATED", IsInitial: true},
+			"ROOT":       {Name: "ROOT", IsCompound: true, InitialChild: "ORDER", Children: []string{"ORDER", "APPROVED"}},
+			"ORDER":      {Name: "ORDER", IsCompound: true, InitialChild: "VALIDATING", Children: []string{"VALIDATING"}, Parent: "ROOT"},
+			"VALIDATING": {Name: "VALIDATING", Parent: "ORDER"},
+			"APPROVED":   {Name: "APPROVED", IsTerminal: true, Parent: "ROOT"},
+		},
+		Transitions: map[string]types.TransitionDef{
+			"start":   {Name: "start", Sources: []string{"CREATED"}, Target: "ROOT"},
+			// "approve" defined on ROOT (grandparent of VALIDATING)
+			"approve": {Name: "approve", Sources: []string{"ROOT"}, Target: "APPROVED"},
+		},
+	}
+	e := newTestEngine(newMemInstanceStore(errInstanceNotFound))
+	cm := compileDef(t, def)
+	inst := simpleInstance("VALIDATING")
+	inst.WorkflowType = "order"
+
+	ct, target, err := e.validateTransition(context.Background(), cm, inst, "approve", nil)
+	if err != nil {
+		t.Fatalf("validateTransition grandparent bubbling failed: %v", err)
+	}
+	if ct.Def.Name != "approve" {
+		t.Errorf("transition name = %q, want approve", ct.Def.Name)
+	}
+	if target != "APPROVED" {
+		t.Errorf("target = %q, want APPROVED", target)
 	}
 }

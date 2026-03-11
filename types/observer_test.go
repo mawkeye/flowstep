@@ -152,3 +152,89 @@ var _ types.GuardObserver = allObserver{}
 var _ types.ActivityObserver = allObserver{}
 var _ types.InfrastructureObserver = allObserver{}
 var _ types.Observer = allObserver{}
+
+// ─── Task 6: SavepointProvider + ActivityResolver interface tests ─────────────
+
+type stubSavepointProvider struct {
+	savepointName   string
+	rollbackToName  string
+}
+
+func (s *stubSavepointProvider) Begin(_ context.Context) (any, error)           { return nil, nil }
+func (s *stubSavepointProvider) Commit(_ context.Context, _ any) error          { return nil }
+func (s *stubSavepointProvider) Rollback(_ context.Context, _ any) error        { return nil }
+func (s *stubSavepointProvider) Savepoint(_ context.Context, _ any, name string) error {
+	s.savepointName = name
+	return nil
+}
+func (s *stubSavepointProvider) RollbackTo(_ context.Context, _ any, name string) error {
+	s.rollbackToName = name
+	return nil
+}
+
+func TestSavepointProvider_InterfaceSatisfaction(t *testing.T) {
+	var _ types.TxProvider = (*stubSavepointProvider)(nil)
+	var _ types.SavepointProvider = (*stubSavepointProvider)(nil)
+}
+
+func TestSavepointProvider_MethodsCallable(t *testing.T) {
+	s := &stubSavepointProvider{}
+	if err := s.Savepoint(context.Background(), nil, "sp1"); err != nil {
+		t.Errorf("Savepoint() error = %v", err)
+	}
+	if s.savepointName != "sp1" {
+		t.Errorf("savepointName = %q, want sp1", s.savepointName)
+	}
+	if err := s.RollbackTo(context.Background(), nil, "sp1"); err != nil {
+		t.Errorf("RollbackTo() error = %v", err)
+	}
+	if s.rollbackToName != "sp1" {
+		t.Errorf("rollbackToName = %q, want sp1", s.rollbackToName)
+	}
+}
+
+type stubActivityResolver struct {
+	activities map[string]types.Activity
+}
+
+func (s *stubActivityResolver) Dispatch(_ context.Context, _ types.ActivityInvocation) error {
+	return nil
+}
+func (s *stubActivityResolver) Resolve(name string) (types.Activity, bool) {
+	a, ok := s.activities[name]
+	return a, ok
+}
+
+func TestActivityResolver_InterfaceSatisfaction(t *testing.T) {
+	var _ types.ActivityRunner = (*stubActivityResolver)(nil)
+	var _ types.ActivityResolver = (*stubActivityResolver)(nil)
+}
+
+func TestActivityResolver_ResolveKnownName(t *testing.T) {
+	act := &stubActivity{name: "my-activity"}
+	resolver := &stubActivityResolver{
+		activities: map[string]types.Activity{"my-activity": act},
+	}
+	got, ok := resolver.Resolve("my-activity")
+	if !ok {
+		t.Fatal("Resolve returned ok=false for known activity")
+	}
+	if got.Name() != "my-activity" {
+		t.Errorf("activity name = %q, want my-activity", got.Name())
+	}
+}
+
+func TestActivityResolver_ResolveUnknownName(t *testing.T) {
+	resolver := &stubActivityResolver{activities: map[string]types.Activity{}}
+	_, ok := resolver.Resolve("nonexistent")
+	if ok {
+		t.Error("Resolve returned ok=true for unknown activity")
+	}
+}
+
+type stubActivity struct{ name string }
+
+func (s *stubActivity) Name() string { return s.name }
+func (s *stubActivity) Execute(_ context.Context, _ types.ActivityInput) (*types.ActivityResult, error) {
+	return &types.ActivityResult{}, nil
+}

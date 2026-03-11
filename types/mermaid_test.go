@@ -77,6 +77,119 @@ func TestMermaidExportRoutedTransitions(t *testing.T) {
 	}
 }
 
+func TestMermaidExport_CompoundState_TwoLevel(t *testing.T) {
+	def := &Definition{
+		AggregateType:  "order",
+		WorkflowType:   "compound",
+		InitialState:   "CREATED",
+		TerminalStates: []string{"APPROVED"},
+		States: map[string]StateDef{
+			"CREATED": {Name: "CREATED", IsInitial: true},
+			"PROCESSING": {
+				Name: "PROCESSING", IsCompound: true,
+				InitialChild: "VALIDATING", Children: []string{"VALIDATING", "APPROVED"},
+			},
+			"VALIDATING": {Name: "VALIDATING", Parent: "PROCESSING"},
+			"APPROVED":   {Name: "APPROVED", Parent: "PROCESSING", IsTerminal: true},
+		},
+		Transitions: map[string]TransitionDef{
+			"start":   {Name: "start", Sources: []string{"CREATED"}, Target: "PROCESSING"},
+			"approve": {Name: "approve", Sources: []string{"PROCESSING"}, Target: "APPROVED"},
+		},
+	}
+
+	diagram := Mermaid(def)
+
+	checks := []string{
+		"state PROCESSING {",
+		"[*] --> VALIDATING",
+		"PROCESSING --> APPROVED : approve",
+		"CREATED --> PROCESSING : start",
+		"APPROVED --> [*]",
+	}
+	for _, want := range checks {
+		if !strings.Contains(diagram, want) {
+			t.Errorf("expected diagram to contain %q\ngot:\n%s", want, diagram)
+		}
+	}
+}
+
+func TestMermaidExport_CompoundState_ThreeLevel(t *testing.T) {
+	def := &Definition{
+		AggregateType:  "order",
+		WorkflowType:   "deep",
+		InitialState:   "CREATED",
+		TerminalStates: []string{"DONE"},
+		States: map[string]StateDef{
+			"CREATED": {Name: "CREATED", IsInitial: true},
+			"ROOT": {
+				Name: "ROOT", IsCompound: true,
+				InitialChild: "ORDER", Children: []string{"ORDER", "DONE"},
+			},
+			"ORDER": {
+				Name: "ORDER", IsCompound: true, Parent: "ROOT",
+				InitialChild: "VALIDATING", Children: []string{"VALIDATING"},
+			},
+			"VALIDATING": {Name: "VALIDATING", Parent: "ORDER"},
+			"DONE":       {Name: "DONE", Parent: "ROOT", IsTerminal: true},
+		},
+		Transitions: map[string]TransitionDef{
+			"start":  {Name: "start", Sources: []string{"CREATED"}, Target: "ROOT"},
+			"finish": {Name: "finish", Sources: []string{"ORDER"}, Target: "DONE"},
+		},
+	}
+
+	diagram := Mermaid(def)
+
+	checks := []string{
+		"state ROOT {",
+		"state ORDER {",
+		"[*] --> ORDER",      // inside ROOT block
+		"[*] --> VALIDATING", // inside ORDER block
+		"CREATED --> ROOT : start",
+	}
+	for _, want := range checks {
+		if !strings.Contains(diagram, want) {
+			t.Errorf("expected diagram to contain %q\ngot:\n%s", want, diagram)
+		}
+	}
+}
+
+func TestMermaidExport_FlatWorkflow_UnchangedOutput(t *testing.T) {
+	def := &Definition{
+		AggregateType:  "order",
+		WorkflowType:   "flat",
+		InitialState:   "A",
+		TerminalStates: []string{"C"},
+		States: map[string]StateDef{
+			"A": {Name: "A", IsInitial: true},
+			"B": {Name: "B"},
+			"C": {Name: "C", IsTerminal: true},
+		},
+		Transitions: map[string]TransitionDef{
+			"ab": {Name: "ab", Sources: []string{"A"}, Target: "B"},
+			"bc": {Name: "bc", Sources: []string{"B"}, Target: "C"},
+		},
+	}
+
+	diagram := Mermaid(def)
+
+	if strings.Contains(diagram, "state ") {
+		t.Errorf("flat workflow should not contain 'state ' blocks, got:\n%s", diagram)
+	}
+	checks := []string{
+		"[*] --> A",
+		"A --> B : ab",
+		"B --> C : bc",
+		"C --> [*]",
+	}
+	for _, want := range checks {
+		if !strings.Contains(diagram, want) {
+			t.Errorf("expected diagram to contain %q\ngot:\n%s", want, diagram)
+		}
+	}
+}
+
 func TestMermaidExportMultiSource(t *testing.T) {
 	def := &Definition{
 		AggregateType:  "order",

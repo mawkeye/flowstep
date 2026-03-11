@@ -5,6 +5,33 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [v0.9.0] - 2026-03-11
+
+### Added
+- **Hierarchical/nested states** — compound states with parent-child containment, entry/exit activities, event bubbling, and LCA-based transition resolution. Backward-compatible with flat workflows. (Tasks 1-10: Hierarchical States)
+- `StateDef` hierarchy fields: `Parent`, `Children`, `InitialChild`, `IsCompound`, `EntryActivity`, `ExitActivity`
+- `ActivityInput` causation metadata: `Transition`, `SourceState`, `EventID` fields for entry/exit activity context
+- Builder DSL: `CompoundState()` helper, `Parent()`, `InitialChild()`, `EntryActivityOpt()`, `ExitActivityOpt()` state modifiers. All state factories (`State`, `WaitState`, `Terminal`) accept `...StateModifier` variadic options.
+- `SavepointProvider` optional interface on `TxProvider` for rollback-to-stable on entry activity failures
+- `TaskInvalidator` optional interface on `TaskStore` for atomic dangling task cleanup when exiting hierarchical subtrees
+- `ActivityResolver` optional interface on `ActivityRunner` for synchronous entry/exit activity resolution by name
+- `memstore.TaskStore` implements `TaskInvalidator` with `InvalidateByStates()`
+- `memrunner` implements `ActivityResolver` with `Resolve(name)`
+- Mermaid compound state rendering using `state X { ... }` nesting syntax with scoped internal transitions
+- Event bubbling: unhandled transitions propagate from leaf state through ancestor chain (first match wins)
+- Engine resolves compound state targets to initial leaf states recursively via `InitialLeafMap`
+- Sentinel errors: `ErrCompoundStateNoInitialChild`, `ErrOrphanedChild`, `ErrCircularHierarchy`
+- Validation rules: compound states must declare `InitialChild`, children reference existing states, `IsWait` leaf-only, circular hierarchy detection
+- `Compile()` populates `Ancestry`, `DepthMap`, `InitialLeafMap` for hierarchical definitions
+- Full hierarchical integration test: compound states, entry/exit activities, event bubbling, Mermaid rendering
+
+### Changed
+- `commitTransition()` now computes LCA-based exit/entry sequences with synchronous entry/exit activity execution and savepoint support
+- `validateTransition()` walks ancestor chain for event bubbling when no direct transition match exists
+- `createInstance()` resolves compound initial states to their initial leaf via `InitialLeafMap`
+- `ForceState()` resolves compound targets to leaf states
+- `computeHash()` includes new `StateDef` hierarchy fields for dedup correctness
+
 ## [v0.8.0] - 2026-03-11
 
 ### Added

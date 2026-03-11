@@ -10,6 +10,7 @@ The package requires a minimum version of Go 1.25.
 - [Quick Start](#quick-start)
 - [Core Concepts](#core-concepts)
   - [States](#states)
+  - [Hierarchical States](#hierarchical-states)
   - [Transitions](#transitions)
   - [Guards](#guards)
   - [Conditional Routing](#conditional-routing)
@@ -36,18 +37,20 @@ The package requires a minimum version of Go 1.25.
 ## Features
 
 - **Fluent builder DSL** for defining workflows as state machines
+- **Hierarchical states** — compound/nested states with entry/exit activities, event bubbling, and LCA-based transitions
 - **Guards** — deterministic precondition checks (no I/O)
 - **Conditional routing** — branch transitions based on runtime conditions
 - **Signals** — trigger transitions from external events (payments, webhooks)
 - **Wait states & tasks** — human-in-the-loop decisions with timeouts
 - **Child workflows** — single or parallel fan-out with join policies (ALL/ANY/N)
 - **Activities** — async side-effects (fire-and-forget or await-result)
+- **Entry/exit activities** — synchronous activities that run within the transition transaction when entering/exiting states
 - **Deterministic side effects** — `engine.SideEffect()` executes a function once and persists its result as an event, enabling replay-safe UUID/timestamp/random generation
 - **Immutable event chain** — every transition appends a domain event
 - **Version coexistence** — multiple workflow versions run side by side
 - **Observability hooks** — instrument transitions, guard failures, activity lifecycle
 - **Admin recovery** — `ForceState` bypasses all rules for operational fixes
-- **Mermaid export** — generate state diagrams from definitions
+- **Mermaid export** — generate state diagrams from definitions, including nested compound states
 - **Pluggable adapters** — swap storage, event bus, and activity runner implementations
 
 ## Installation
@@ -138,7 +141,7 @@ func main() {
 
 ### States
 
-Every workflow has exactly one **initial** state and at least one **terminal** state. Intermediate states are declared with `State`. States that wait for human input use `WaitState`.
+Every workflow has exactly one **initial** state and at least one **terminal** state. Intermediate states are declared with `State`. States that wait for human input use `WaitState`. All state factories accept optional `StateModifier` arguments for hierarchy and entry/exit activities.
 
 ```go
 flowstep.Initial("SUBMITTED")
@@ -147,6 +150,41 @@ flowstep.WaitState("PENDING_APPROVAL")  // pauses for a task
 flowstep.Terminal("APPROVED")
 flowstep.Terminal("REJECTED")
 ```
+
+### Hierarchical States
+
+Compound states model containment — a parent state contains child states. The workflow is always in a leaf state; entering a compound state means entering its initial child (recursively for deep hierarchies).
+
+```go
+def, _ := flowstep.Define("order", "order_workflow").
+    Version(1).
+    States(
+        flowstep.Initial("CREATED"),
+        // Compound state with two children
+        flowstep.CompoundState("PROCESSING",
+            flowstep.InitialChild("REVIEWING"),
+            flowstep.EntryActivityOpt("start_processing"),
+            flowstep.ExitActivityOpt("cleanup_processing"),
+        ),
+        flowstep.State("REVIEWING", flowstep.Parent("PROCESSING")),
+        flowstep.State("APPROVED", flowstep.Parent("PROCESSING")),
+        flowstep.Terminal("DONE"),
+    ).
+    // Transitions work with hierarchy
+    Transition("begin", flowstep.From("CREATED"), flowstep.To("PROCESSING")).
+    Transition("approve", flowstep.From("REVIEWING"), flowstep.To("APPROVED")).
+    Transition("finish", flowstep.From("APPROVED"), flowstep.To("DONE")).
+    Build()
+```
+
+Key behaviors:
+
+- **Compound target resolution:** Transitioning to `PROCESSING` automatically enters `REVIEWING` (the initial child).
+- **Entry/exit activities:** When entering a compound state subtree, entry activities run from ancestor to leaf. When exiting, exit activities run from leaf to ancestor. All execute synchronously within the transaction.
+- **Event bubbling:** If no transition matches at the current leaf state, the engine checks ancestor states upward. First match wins.
+- **LCA-based transitions:** The engine computes the Lowest Common Ancestor to determine which states to exit and enter. Only states between the source and LCA are exited, and states between the LCA and target are entered.
+- **Dangling task cleanup:** Pending tasks for states in an exited subtree are automatically invalidated (requires `TaskInvalidator` on your `TaskStore`).
+- **Savepoint support:** Entry activity failures roll back to a savepoint, preserving the pre-transition state (requires `SavepointProvider` on your `TxProvider`). Without savepoints, the instance is marked STUCK.
 
 ### Transitions
 
@@ -515,6 +553,20 @@ stateDiagram-v2
     CANCELLED --> [*]
 ```
 
+For hierarchical workflows, compound states are rendered with `state X { ... }` nesting:
+
+```mermaid
+stateDiagram-v2
+    [*] --> CREATED
+    CREATED --> PROCESSING : begin
+    state PROCESSING {
+        [*] --> REVIEWING
+        REVIEWING --> APPROVED : approve
+    }
+    PROCESSING --> DONE : finish
+    DONE --> [*]
+```
+
 ## Testing
 
 The `testutil` package provides a fully wired in-memory engine, a fake clock, and assertion helpers.
@@ -610,6 +662,9 @@ if err != nil {
 | `ErrActivityTimeout` | Activity timed out before completing |
 | `ErrActivityNotFound` | Activity invocation not found |
 | `ErrSpawnCycle` | Cross-workflow spawn cycle detected during `Register()` |
+| `ErrCompoundStateNoInitialChild` | Compound state has no `InitialChild` declared |
+| `ErrOrphanedChild` | State references a non-existent parent |
+| `ErrCircularHierarchy` | Circular parent-child hierarchy detected |
 | `ErrEngineShutdown` | Engine has been shut down |
 
 

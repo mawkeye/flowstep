@@ -69,6 +69,29 @@ type ActivityRunner interface {
 	Dispatch(ctx context.Context, invocation ActivityInvocation) error
 }
 
+// SavepointProvider is an optional extension of TxProvider for databases that support savepoints.
+// The engine type-asserts TxProvider to SavepointProvider at startup to detect the capability.
+// Without this, entry/exit activity failures mark the instance STUCK instead of rolling back.
+type SavepointProvider interface {
+	Savepoint(ctx context.Context, tx any, name string) error
+	RollbackTo(ctx context.Context, tx any, name string) error
+}
+
+// TaskInvalidator is an optional extension of TaskStore for cancelling tasks associated with
+// states being exited during a hierarchical transition. Adapters opt in by implementing this
+// interface. The engine type-asserts TaskStore to TaskInvalidator at the call site; if the
+// store doesn't implement it, cleanup is skipped gracefully.
+type TaskInvalidator interface {
+	InvalidateByStates(ctx context.Context, tx any, aggregateType, aggregateID string, states []string) error
+}
+
+// ActivityResolver is an optional extension of ActivityRunner for synchronous activity resolution.
+// The engine type-asserts ActivityRunner to ActivityResolver when entry/exit activities need execution.
+// ActivityRunners that don't implement Resolve degrade gracefully (entry/exit activities are skipped with a warning).
+type ActivityResolver interface {
+	Resolve(name string) (Activity, bool)
+}
+
 // Activity performs non-deterministic work outside the workflow transaction.
 // Can contain any code: API calls, DB writes, file I/O, network requests.
 // flowstep does NOT recover or replay activity state on failure.

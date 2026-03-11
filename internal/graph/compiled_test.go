@@ -2,6 +2,7 @@ package graph
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/mawkeye/flowstep/types"
@@ -478,5 +479,347 @@ func TestCompile_CompiledTransition_GuardNamesNilFree(t *testing.T) {
 				t.Errorf("CompiledTransition %q: Def is nil", ct.Def.Name)
 			}
 		}
+	}
+}
+
+// ─── Task 3 (Hierarchy): StateDef fields, ActivityInput fields, hash changes ──
+
+func TestStateDef_HierarchyFields(t *testing.T) {
+	sd := types.StateDef{
+		Name:          "PROCESSING",
+		Parent:        "ORDER",
+		Children:      []string{"VALIDATING", "APPROVED"},
+		InitialChild:  "VALIDATING",
+		IsCompound:    true,
+		EntryActivity: "on_enter_processing",
+		ExitActivity:  "on_exit_processing",
+	}
+	if sd.Parent != "ORDER" {
+		t.Errorf("Parent = %q, want ORDER", sd.Parent)
+	}
+	if len(sd.Children) != 2 {
+		t.Errorf("Children len = %d, want 2", len(sd.Children))
+	}
+	if sd.InitialChild != "VALIDATING" {
+		t.Errorf("InitialChild = %q, want VALIDATING", sd.InitialChild)
+	}
+	if !sd.IsCompound {
+		t.Error("IsCompound = false, want true")
+	}
+	if sd.EntryActivity != "on_enter_processing" {
+		t.Errorf("EntryActivity = %q, want on_enter_processing", sd.EntryActivity)
+	}
+	if sd.ExitActivity != "on_exit_processing" {
+		t.Errorf("ExitActivity = %q, want on_exit_processing", sd.ExitActivity)
+	}
+}
+
+func TestActivityInput_CausationFields(t *testing.T) {
+	ai := types.ActivityInput{
+		WorkflowType: "order",
+		AggregateID:  "agg-1",
+		Transition:   "start",
+		SourceState:  "CREATED",
+		EventID:      "evt-42",
+	}
+	if ai.Transition != "start" {
+		t.Errorf("Transition = %q, want start", ai.Transition)
+	}
+	if ai.SourceState != "CREATED" {
+		t.Errorf("SourceState = %q, want CREATED", ai.SourceState)
+	}
+	if ai.EventID != "evt-42" {
+		t.Errorf("EventID = %q, want evt-42", ai.EventID)
+	}
+}
+
+// TestCompile_DefinitionHash_DiffersOnParentField verifies that computeHash includes
+// the Parent field so two definitions differing only in Parent produce different hashes.
+func TestCompile_DefinitionHash_DiffersOnParentField(t *testing.T) {
+	def1 := &types.Definition{
+		AggregateType: "order",
+		WorkflowType:  "order-workflow",
+		Version:       1,
+		States: map[string]types.StateDef{
+			"CREATED":    {Name: "CREATED", IsInitial: true},
+			"PROCESSING": {Name: "PROCESSING", Parent: ""},
+			"DONE":       {Name: "DONE", IsTerminal: true},
+		},
+		Transitions: map[string]types.TransitionDef{
+			"start":  {Name: "start", Sources: []string{"CREATED"}, Target: "PROCESSING"},
+			"finish": {Name: "finish", Sources: []string{"PROCESSING"}, Target: "DONE"},
+		},
+		InitialState:   "CREATED",
+		TerminalStates: []string{"DONE"},
+	}
+	def2 := &types.Definition{
+		AggregateType: "order",
+		WorkflowType:  "order-workflow",
+		Version:       1,
+		States: map[string]types.StateDef{
+			"CREATED":    {Name: "CREATED", IsInitial: true},
+			"PROCESSING": {Name: "PROCESSING", Parent: "ORDER"},
+			"DONE":       {Name: "DONE", IsTerminal: true},
+		},
+		Transitions: map[string]types.TransitionDef{
+			"start":  {Name: "start", Sources: []string{"CREATED"}, Target: "PROCESSING"},
+			"finish": {Name: "finish", Sources: []string{"PROCESSING"}, Target: "DONE"},
+		},
+		InitialState:   "CREATED",
+		TerminalStates: []string{"DONE"},
+	}
+	cm1, err := Compile(def1, Sentinels{})
+	if err != nil {
+		t.Fatalf("Compile(def1) error = %v", err)
+	}
+	cm2, err := Compile(def2, Sentinels{})
+	if err != nil {
+		t.Fatalf("Compile(def2) error = %v", err)
+	}
+	if cm1.DefinitionHash == cm2.DefinitionHash {
+		t.Error("definitions differing only in Parent should produce different hashes")
+	}
+}
+
+// ─── Task 4: Hierarchy compilation — Ancestry, DepthMap, InitialLeafMap ───────
+
+// hierarchyDef builds a 3-level compound workflow:
+//
+//	CREATED (initial) → ORDER (compound, initial=PROCESSING)
+//	  PROCESSING (compound, initial=VALIDATING)
+//	    VALIDATING (leaf)
+//	    APPROVED (leaf, terminal)
+func hierarchyDef() *types.Definition {
+	return &types.Definition{
+		AggregateType: "order",
+		WorkflowType:  "hierarchical",
+		Version:       1,
+		States: map[string]types.StateDef{
+			"CREATED":    {Name: "CREATED", IsInitial: true},
+			"ORDER":      {Name: "ORDER", IsCompound: true, InitialChild: "PROCESSING", Children: []string{"PROCESSING"}},
+			"PROCESSING": {Name: "PROCESSING", IsCompound: true, InitialChild: "VALIDATING", Children: []string{"VALIDATING", "APPROVED"}, Parent: "ORDER"},
+			"VALIDATING": {Name: "VALIDATING", Parent: "PROCESSING"},
+			"APPROVED":   {Name: "APPROVED", Parent: "PROCESSING", IsTerminal: true},
+		},
+		Transitions: map[string]types.TransitionDef{
+			"start":   {Name: "start", Sources: []string{"CREATED"}, Target: "ORDER"},
+			"approve": {Name: "approve", Sources: []string{"VALIDATING"}, Target: "APPROVED"},
+		},
+		InitialState:   "CREATED",
+		TerminalStates: []string{"APPROVED"},
+	}
+}
+
+func TestCompile_Hierarchy_Ancestry_TwoLevel(t *testing.T) {
+	def := &types.Definition{
+		AggregateType: "order",
+		WorkflowType:  "hierarchical",
+		Version:       1,
+		States: map[string]types.StateDef{
+			"CREATED":    {Name: "CREATED", IsInitial: true},
+			"PROCESSING": {Name: "PROCESSING", IsCompound: true, InitialChild: "VALIDATING", Children: []string{"VALIDATING", "APPROVED"}},
+			"VALIDATING": {Name: "VALIDATING", Parent: "PROCESSING"},
+			"APPROVED":   {Name: "APPROVED", Parent: "PROCESSING", IsTerminal: true},
+		},
+		Transitions: map[string]types.TransitionDef{
+			"start":   {Name: "start", Sources: []string{"CREATED"}, Target: "PROCESSING"},
+			"approve": {Name: "approve", Sources: []string{"VALIDATING"}, Target: "APPROVED"},
+		},
+		InitialState:   "CREATED",
+		TerminalStates: []string{"APPROVED"},
+	}
+	cm, err := Compile(def, Sentinels{})
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+
+	// Root states have no ancestry
+	if len(cm.Ancestry["CREATED"]) != 0 {
+		t.Errorf("CREATED ancestry len = %d, want 0", len(cm.Ancestry["CREATED"]))
+	}
+	if len(cm.Ancestry["PROCESSING"]) != 0 {
+		t.Errorf("PROCESSING ancestry len = %d, want 0 (root compound)", len(cm.Ancestry["PROCESSING"]))
+	}
+
+	// Children have parent in ancestry
+	gotValidating := cm.Ancestry["VALIDATING"]
+	if len(gotValidating) != 1 || gotValidating[0] != "PROCESSING" {
+		t.Errorf("VALIDATING ancestry = %v, want [PROCESSING]", gotValidating)
+	}
+	gotApproved := cm.Ancestry["APPROVED"]
+	if len(gotApproved) != 1 || gotApproved[0] != "PROCESSING" {
+		t.Errorf("APPROVED ancestry = %v, want [PROCESSING]", gotApproved)
+	}
+}
+
+func TestCompile_Hierarchy_Ancestry_ThreeLevel(t *testing.T) {
+	def := hierarchyDef()
+	cm, err := Compile(def, Sentinels{})
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+
+	// PROCESSING's parent is ORDER
+	gotProcessing := cm.Ancestry["PROCESSING"]
+	if len(gotProcessing) != 1 || gotProcessing[0] != "ORDER" {
+		t.Errorf("PROCESSING ancestry = %v, want [ORDER]", gotProcessing)
+	}
+
+	// VALIDATING's ancestry is [PROCESSING, ORDER] (nearest first)
+	gotValidating := cm.Ancestry["VALIDATING"]
+	if len(gotValidating) != 2 {
+		t.Fatalf("VALIDATING ancestry len = %d, want 2, got %v", len(gotValidating), gotValidating)
+	}
+	if gotValidating[0] != "PROCESSING" {
+		t.Errorf("VALIDATING ancestry[0] = %q, want PROCESSING", gotValidating[0])
+	}
+	if gotValidating[1] != "ORDER" {
+		t.Errorf("VALIDATING ancestry[1] = %q, want ORDER", gotValidating[1])
+	}
+}
+
+func TestCompile_Hierarchy_DepthMap(t *testing.T) {
+	def := hierarchyDef()
+	cm, err := Compile(def, Sentinels{})
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+
+	tests := []struct {
+		state string
+		depth int
+	}{
+		{"CREATED", 0},
+		{"ORDER", 0},
+		{"PROCESSING", 1},
+		{"VALIDATING", 2},
+		{"APPROVED", 2},
+	}
+	for _, tt := range tests {
+		got, ok := cm.DepthMap[tt.state]
+		if !ok {
+			t.Errorf("DepthMap missing state %q", tt.state)
+			continue
+		}
+		if got != tt.depth {
+			t.Errorf("DepthMap[%q] = %d, want %d", tt.state, got, tt.depth)
+		}
+	}
+}
+
+func TestCompile_Hierarchy_InitialLeafMap(t *testing.T) {
+	def := hierarchyDef()
+	cm, err := Compile(def, Sentinels{})
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+
+	// ORDER's initial leaf: ORDER→PROCESSING→VALIDATING
+	gotOrder, ok := cm.InitialLeafMap["ORDER"]
+	if !ok {
+		t.Error("InitialLeafMap missing ORDER")
+	} else if gotOrder != "VALIDATING" {
+		t.Errorf("InitialLeafMap[ORDER] = %q, want VALIDATING", gotOrder)
+	}
+
+	// PROCESSING's initial leaf: PROCESSING→VALIDATING
+	gotProcessing, ok := cm.InitialLeafMap["PROCESSING"]
+	if !ok {
+		t.Error("InitialLeafMap missing PROCESSING")
+	} else if gotProcessing != "VALIDATING" {
+		t.Errorf("InitialLeafMap[PROCESSING] = %q, want VALIDATING", gotProcessing)
+	}
+
+	// Leaf states are NOT in InitialLeafMap
+	if _, ok := cm.InitialLeafMap["VALIDATING"]; ok {
+		t.Error("InitialLeafMap should not contain leaf state VALIDATING")
+	}
+}
+
+func TestCompile_Hierarchy_CircularDetection(t *testing.T) {
+	sentinel := errors.New("test: circular hierarchy")
+	s := hierarchySentinels()
+	s.ErrCircularHierarchy = sentinel
+
+	// Build a definition with circular parent: A→B→A
+	def := &types.Definition{
+		AggregateType: "order",
+		WorkflowType:  "circular",
+		Version:       1,
+		States: map[string]types.StateDef{
+			// A is marked as parent of B, B is marked as parent of A — circular
+			"A": {Name: "A", IsInitial: true, IsCompound: true, InitialChild: "B", Children: []string{"B"}, Parent: "B"},
+			"B": {Name: "B", IsTerminal: true, IsCompound: true, InitialChild: "A", Children: []string{"A"}, Parent: "A"},
+		},
+		Transitions:    map[string]types.TransitionDef{},
+		InitialState:   "A",
+		TerminalStates: []string{"B"},
+	}
+
+	_, err := Compile(def, s)
+	if err == nil {
+		t.Fatal("Compile() should return error for circular parent-child hierarchy")
+	}
+	if !errors.Is(err, sentinel) {
+		t.Errorf("expected ErrCircularHierarchy, got %v", err)
+	}
+}
+
+func TestCompile_Hierarchy_LCA_TwoSiblings(t *testing.T) {
+	def := &types.Definition{
+		AggregateType: "order",
+		WorkflowType:  "hierarchical",
+		Version:       1,
+		States: map[string]types.StateDef{
+			"CREATED":    {Name: "CREATED", IsInitial: true},
+			"PROCESSING": {Name: "PROCESSING", IsCompound: true, InitialChild: "VALIDATING", Children: []string{"VALIDATING", "APPROVED"}},
+			"VALIDATING": {Name: "VALIDATING", Parent: "PROCESSING"},
+			"APPROVED":   {Name: "APPROVED", Parent: "PROCESSING", IsTerminal: true},
+		},
+		Transitions: map[string]types.TransitionDef{
+			"start":   {Name: "start", Sources: []string{"CREATED"}, Target: "PROCESSING"},
+			"approve": {Name: "approve", Sources: []string{"VALIDATING"}, Target: "APPROVED"},
+		},
+		InitialState:   "CREATED",
+		TerminalStates: []string{"APPROVED"},
+	}
+	cm, err := Compile(def, Sentinels{})
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+
+	// LCA of two siblings is their shared parent
+	lca, found := cm.LCA("VALIDATING", "APPROVED")
+	if !found {
+		t.Fatal("LCA(VALIDATING, APPROVED): found=false, want true")
+	}
+	if lca != "PROCESSING" {
+		t.Errorf("LCA(VALIDATING, APPROVED) = %q, want PROCESSING", lca)
+	}
+}
+
+func TestCompile_DefinitionHash_DiffersOnEntryExitActivity(t *testing.T) {
+	base := types.StateDef{Name: "PROCESSING", IsInitial: true}
+	withEntry := base
+	withEntry.EntryActivity = "on_enter"
+
+	def1 := &types.Definition{
+		AggregateType: "order", WorkflowType: "wf", Version: 1,
+		States:         map[string]types.StateDef{"PROCESSING": base, "DONE": {Name: "DONE", IsTerminal: true}},
+		Transitions:    map[string]types.TransitionDef{"go": {Name: "go", Sources: []string{"PROCESSING"}, Target: "DONE"}},
+		InitialState:   "PROCESSING",
+		TerminalStates: []string{"DONE"},
+	}
+	def2 := &types.Definition{
+		AggregateType: "order", WorkflowType: "wf", Version: 1,
+		States:         map[string]types.StateDef{"PROCESSING": withEntry, "DONE": {Name: "DONE", IsTerminal: true}},
+		Transitions:    map[string]types.TransitionDef{"go": {Name: "go", Sources: []string{"PROCESSING"}, Target: "DONE"}},
+		InitialState:   "PROCESSING",
+		TerminalStates: []string{"DONE"},
+	}
+	cm1, _ := Compile(def1, Sentinels{})
+	cm2, _ := Compile(def2, Sentinels{})
+	if cm1.DefinitionHash == cm2.DefinitionHash {
+		t.Error("definitions differing in EntryActivity should produce different hashes")
 	}
 }

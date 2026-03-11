@@ -195,3 +195,163 @@ func TestCopyMap_deepNested(t *testing.T) {
 		t.Error("nested map is not a deep copy")
 	}
 }
+
+// ─── Task 7: computeExitSequence + computeEntrySequence tests ─────────────────
+
+// twoLevelAncestry: PROCESSING→[VALIDATING, APPROVED], both children's ancestry = [PROCESSING]
+func twoLevelAncestry() map[string][]string {
+	return map[string][]string{
+		"VALIDATING": {"PROCESSING"},
+		"APPROVED":   {"PROCESSING"},
+	}
+}
+
+// threeLevelAncestry: ROOT→ORDER→[VALIDATING, APPROVED]
+func threeLevelAncestry() map[string][]string {
+	return map[string][]string{
+		"ORDER":      {"ROOT"},
+		"VALIDATING": {"ORDER", "ROOT"},
+		"APPROVED":   {"ORDER", "ROOT"},
+	}
+}
+
+func TestComputeExitSequence_SiblingTransition(t *testing.T) {
+	// VALIDATING→APPROVED, LCA=PROCESSING: exit only VALIDATING (not PROCESSING)
+	got := computeExitSequence("VALIDATING", "PROCESSING", twoLevelAncestry())
+	want := []string{"VALIDATING"}
+	if len(got) != len(want) || got[0] != want[0] {
+		t.Errorf("exit seq = %v, want %v", got, want)
+	}
+}
+
+func TestComputeExitSequence_FlatWorkflow(t *testing.T) {
+	// No ancestry, lca="" — exit only source
+	got := computeExitSequence("CREATED", "", map[string][]string{})
+	if len(got) != 1 || got[0] != "CREATED" {
+		t.Errorf("exit seq = %v, want [CREATED]", got)
+	}
+}
+
+func TestComputeExitSequence_ThreeLevel(t *testing.T) {
+	// VALIDATING→APPROVED, LCA=ORDER: exit [VALIDATING]
+	got := computeExitSequence("VALIDATING", "ORDER", threeLevelAncestry())
+	want := []string{"VALIDATING"}
+	if len(got) != 1 || got[0] != "VALIDATING" {
+		t.Errorf("exit seq = %v, want %v", got, want)
+	}
+}
+
+func TestComputeExitSequence_CrossHierarchy(t *testing.T) {
+	// VALIDATING→APPROVED, LCA=ROOT: exit [VALIDATING, ORDER]
+	got := computeExitSequence("VALIDATING", "ROOT", threeLevelAncestry())
+	want := []string{"VALIDATING", "ORDER"}
+	if len(got) != len(want) {
+		t.Fatalf("exit seq = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("exit seq[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestComputeEntrySequence_SiblingTransition(t *testing.T) {
+	// LCA=PROCESSING, target=APPROVED: enter [APPROVED] only
+	got := computeEntrySequence("PROCESSING", "APPROVED", twoLevelAncestry())
+	want := []string{"APPROVED"}
+	if len(got) != 1 || got[0] != want[0] {
+		t.Errorf("entry seq = %v, want %v", got, want)
+	}
+}
+
+func TestComputeEntrySequence_FlatToHierarchy(t *testing.T) {
+	// LCA="" (flat source), target=VALIDATING: enter [PROCESSING, VALIDATING] (full path)
+	got := computeEntrySequence("", "VALIDATING", twoLevelAncestry())
+	want := []string{"PROCESSING", "VALIDATING"}
+	if len(got) != len(want) {
+		t.Fatalf("entry seq = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("entry seq[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+// ─── Task 8: collectSubtreeStates tests ───────────────────────────────────────
+
+func flatDef() *types.Definition {
+	return &types.Definition{
+		States: map[string]types.StateDef{
+			"CREATED":    {Name: "CREATED"},
+			"PROCESSING": {Name: "PROCESSING"},
+			"DONE":       {Name: "DONE"},
+		},
+	}
+}
+
+func hierarchyDef() *types.Definition {
+	return &types.Definition{
+		States: map[string]types.StateDef{
+			"PROCESSING": {Name: "PROCESSING", IsCompound: true, Children: []string{"VALIDATING", "APPROVED"}},
+			"VALIDATING": {Name: "VALIDATING", Parent: "PROCESSING"},
+			"APPROVED":   {Name: "APPROVED", Parent: "PROCESSING"},
+		},
+	}
+}
+
+func TestCollectSubtreeStates_LeafState_ReturnsSelf(t *testing.T) {
+	got := collectSubtreeStates([]string{"VALIDATING"}, flatDef())
+	if len(got) != 1 || got[0] != "VALIDATING" {
+		t.Errorf("expected [VALIDATING], got %v", got)
+	}
+}
+
+func TestCollectSubtreeStates_CompoundState_IncludesChildren(t *testing.T) {
+	got := collectSubtreeStates([]string{"PROCESSING"}, hierarchyDef())
+	wantSet := map[string]bool{"PROCESSING": true, "VALIDATING": true, "APPROVED": true}
+	if len(got) != len(wantSet) {
+		t.Fatalf("expected 3 states, got %v", got)
+	}
+	for _, s := range got {
+		if !wantSet[s] {
+			t.Errorf("unexpected state %q in result", s)
+		}
+	}
+}
+
+func TestCollectSubtreeStates_MultipleRoots_Union(t *testing.T) {
+	got := collectSubtreeStates([]string{"VALIDATING", "PROCESSING"}, hierarchyDef())
+	// VALIDATING subtree = {VALIDATING}, PROCESSING subtree = {PROCESSING, VALIDATING, APPROVED}
+	// Union = {PROCESSING, VALIDATING, APPROVED}
+	wantSet := map[string]bool{"PROCESSING": true, "VALIDATING": true, "APPROVED": true}
+	if len(got) != len(wantSet) {
+		t.Fatalf("expected 3 states, got %v", got)
+	}
+	for _, s := range got {
+		if !wantSet[s] {
+			t.Errorf("unexpected state %q in result", s)
+		}
+	}
+}
+
+func TestCollectSubtreeStates_EmptyRoots(t *testing.T) {
+	got := collectSubtreeStates([]string{}, flatDef())
+	if len(got) != 0 {
+		t.Errorf("expected empty result, got %v", got)
+	}
+}
+
+func TestComputeEntrySequence_ThreeLevel_FlatSource(t *testing.T) {
+	// LCA="", target=VALIDATING: enter [ROOT, ORDER, VALIDATING]
+	got := computeEntrySequence("", "VALIDATING", threeLevelAncestry())
+	want := []string{"ROOT", "ORDER", "VALIDATING"}
+	if len(got) != len(want) {
+		t.Fatalf("entry seq = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("entry seq[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}

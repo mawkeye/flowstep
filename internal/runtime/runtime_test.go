@@ -154,6 +154,46 @@ func simpleInstance(state string) *types.WorkflowInstance {
 	}
 }
 
+// ─── SavepointProvider capability detection tests ─────────────────────────────
+
+// txWithSavepoints implements both TxProvider and SavepointProvider.
+type txWithSavepoints struct {
+	noopTx
+	savepointCalled   bool
+	rollbackToCalled  bool
+}
+
+func (t *txWithSavepoints) Savepoint(_ context.Context, _ any, _ string) error {
+	t.savepointCalled = true
+	return nil
+}
+func (t *txWithSavepoints) RollbackTo(_ context.Context, _ any, _ string) error {
+	t.rollbackToCalled = true
+	return nil
+}
+
+func TestEngine_DetectsSavepointCapability_WhenProviderSupports(t *testing.T) {
+	txSP := &txWithSavepoints{}
+	e := New(Deps{
+		EventStore:          &noopEventStore{},
+		InstanceStore:       newMemInstanceStore(errInstanceNotFound),
+		TxProvider:          txSP,
+		Clock:               &fixedClock{},
+		ErrInstanceNotFound: errInstanceNotFound,
+		ErrEngineShutdown:   errEngineShutdown,
+	})
+	if !e.hasSavepoints {
+		t.Error("hasSavepoints should be true when TxProvider implements SavepointProvider")
+	}
+}
+
+func TestEngine_DetectsSavepointCapability_WhenProviderDoesNot(t *testing.T) {
+	e := newTestEngine(newMemInstanceStore(errInstanceNotFound))
+	if e.hasSavepoints {
+		t.Error("hasSavepoints should be false when TxProvider is plain noopTx")
+	}
+}
+
 // ─── Shutdown tests ───────────────────────────────────────────────────────────
 
 func TestShutdown_respectsContextCancellation(t *testing.T) {

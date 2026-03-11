@@ -20,6 +20,7 @@ type PendingTask struct {
 	TaskType      string
 	Description   string
 	Options       []string
+	State         string // the wait state this task was created for
 	AssignedTo    string
 	Timeout       time.Duration
 	ExpiresAt     time.Time

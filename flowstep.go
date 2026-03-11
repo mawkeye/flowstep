@@ -10,6 +10,7 @@ import (
 type (
 	TransitionOption  = builder.TransitionOption
 	StateOption       = builder.StateOption
+	StateModifier     = builder.StateModifier
 	PostCommitWarning = types.PostCommitWarning
 )
 
@@ -38,20 +39,30 @@ var (
 	Terminal  = builder.Terminal
 	State     = builder.State
 	WaitState = builder.WaitState
+
+	// Hierarchy builder functions
+	CompoundState    = builder.CompoundState
+	Parent           = builder.Parent
+	InitialChild     = builder.InitialChild
+	EntryActivityOpt = builder.EntryActivityOpt
+	ExitActivityOpt  = builder.ExitActivityOpt
 )
 
 // Define starts building a workflow definition.
 func Define(aggregateType, workflowType string) *builder.DefBuilder {
 	validateFn := func(def *types.Definition) error {
 		return graph.Validate(def, graph.Sentinels{
-			ErrNoInitialState:        ErrNoInitialState,
-			ErrMultipleInitialStates: ErrMultipleInitialStates,
-			ErrNoTerminalStates:      ErrNoTerminalStates,
-			ErrUnreachableState:      ErrUnreachableState,
-			ErrDeadEndState:          ErrDeadEndState,
-			ErrUnknownState:          ErrUnknownState,
-			ErrMissingDefault:        ErrMissingDefault,
-			ErrDuplicateTransition:   ErrDuplicateTransition,
+			ErrNoInitialState:              ErrNoInitialState,
+			ErrMultipleInitialStates:       ErrMultipleInitialStates,
+			ErrNoTerminalStates:            ErrNoTerminalStates,
+			ErrUnreachableState:            ErrUnreachableState,
+			ErrDeadEndState:                ErrDeadEndState,
+			ErrUnknownState:                ErrUnknownState,
+			ErrMissingDefault:              ErrMissingDefault,
+			ErrDuplicateTransition:         ErrDuplicateTransition,
+			ErrCompoundStateNoInitialChild: ErrCompoundStateNoInitialChild,
+			ErrOrphanedChild:               ErrOrphanedChild,
+			ErrCircularHierarchy:           ErrCircularHierarchy,
 		})
 	}
 	return builder.New(aggregateType, workflowType, validateFn, ErrDuplicateTransition)

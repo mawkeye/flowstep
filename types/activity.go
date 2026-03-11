@@ -18,6 +18,11 @@ type ActivityInput struct {
 	CorrelationID string
 	Params        map[string]any
 	ScheduledAt   time.Time
+
+	// Causation metadata — populated for entry/exit activities.
+	Transition  string // Name of the transition that triggered this activity.
+	SourceState string // Leaf state the workflow was in before the transition.
+	EventID     string // ID of the domain event that triggered the transition (if any).
 }
 
 // ActivityResult is returned from Activity.Execute.

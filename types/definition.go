@@ -45,6 +45,14 @@ type StateDef struct {
 	IsInitial  bool
 	IsTerminal bool
 	IsWait     bool
+
+	// Hierarchy fields — zero values represent flat (non-hierarchical) states.
+	Parent        string   // Name of the parent compound state. Empty for root states.
+	Children      []string // Direct child state names. Populated by Build(). Empty for leaf states.
+	InitialChild  string   // Name of the child state to enter when this compound state is entered.
+	IsCompound    bool     // True if this state has children (set by Build() or explicitly).
+	EntryActivity string   // Activity name to execute synchronously when entering this state.
+	ExitActivity  string   // Activity name to execute synchronously when exiting this state.
 }
 
 // Route represents a conditional target in a routed transition.

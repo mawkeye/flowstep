@@ -73,8 +73,8 @@ func (cm *CompiledMachine) LCA(stateA, stateB string) (string, bool) {
 
 // Compile builds a CompiledMachine from a Definition.
 // It assumes the definition has already been validated with Validate().
-// Returns an error only for structural problems detectable without validation context.
-func Compile(def *types.Definition, _ Sentinels) (*CompiledMachine, error) {
+// Returns an error if a circular parent-child hierarchy is detected.
+func Compile(def *types.Definition, s Sentinels) (*CompiledMachine, error) {
 	cm := &CompiledMachine{
 		Definition:         def,
 		Ancestry:           make(map[string][]string),
@@ -84,10 +84,26 @@ func Compile(def *types.Definition, _ Sentinels) (*CompiledMachine, error) {
 		TransitionsByState: make(map[string][]*CompiledTransition),
 	}
 
-	// Populate DepthMap: all states at depth 0 for flat workflows.
-	// (Task 3 will populate Ancestry/DepthMap for hierarchical states when Parent field is added.)
+	// Populate Ancestry and DepthMap.
+	// For flat workflows (no Parent), Ancestry stays empty and DepthMap is 0 for all.
+	ancestryMemo := make(map[string][]string)
 	for name := range def.States {
-		cm.DepthMap[name] = 0
+		chain, err := buildAncestry(name, def, ancestryMemo, make(map[string]bool), s)
+		if err != nil {
+			return nil, err
+		}
+		if len(chain) > 0 {
+			cm.Ancestry[name] = chain
+		}
+		cm.DepthMap[name] = len(chain)
+	}
+
+	// Populate InitialLeafMap for compound states (recursive initial-child resolution).
+	leafMemo := make(map[string]string)
+	for name, st := range def.States {
+		if st.IsCompound && st.InitialChild != "" {
+			cm.InitialLeafMap[name] = resolveInitialLeaf(name, def, leafMemo)
+		}
 	}
 
 	// Build TransitionsByState index with precomputed guard names.
@@ -112,6 +128,58 @@ func Compile(def *types.Definition, _ Sentinels) (*CompiledMachine, error) {
 	cm.DefinitionHash = computeHash(def)
 
 	return cm, nil
+}
+
+// buildAncestry returns the ordered ancestor chain for a state (nearest first).
+// For root states (no Parent), returns an empty slice.
+// Returns ErrCircularHierarchy if a cycle is detected in the parent chain.
+func buildAncestry(
+	name string,
+	def *types.Definition,
+	memo map[string][]string,
+	visiting map[string]bool,
+	s Sentinels,
+) ([]string, error) {
+	if chain, ok := memo[name]; ok {
+		return chain, nil
+	}
+	st, ok := def.States[name]
+	if !ok || st.Parent == "" {
+		memo[name] = []string{}
+		return []string{}, nil
+	}
+	if visiting[name] {
+		return nil, &ValidationError{
+			Sentinel: s.ErrCircularHierarchy,
+			Detail:   fmt.Sprintf("flowstep: circular parent-child hierarchy detected at state %q", name),
+		}
+	}
+	visiting[name] = true
+	parentChain, err := buildAncestry(st.Parent, def, memo, visiting, s)
+	if err != nil {
+		return nil, err
+	}
+	delete(visiting, name)
+
+	chain := make([]string, 0, 1+len(parentChain))
+	chain = append(chain, st.Parent)
+	chain = append(chain, parentChain...)
+	memo[name] = chain
+	return chain, nil
+}
+
+// resolveInitialLeaf recursively follows InitialChild links until a leaf state is reached.
+func resolveInitialLeaf(name string, def *types.Definition, memo map[string]string) string {
+	if leaf, ok := memo[name]; ok {
+		return leaf
+	}
+	st := def.States[name]
+	if !st.IsCompound || st.InitialChild == "" {
+		return name
+	}
+	leaf := resolveInitialLeaf(st.InitialChild, def, memo)
+	memo[name] = leaf
+	return leaf
 }
 
 // resolveGuardNames returns the display name for each guard in order.
@@ -152,8 +220,12 @@ func computeHash(def *types.Definition) string {
 	// States (sorted by name)
 	for _, name := range slices.Sorted(maps.Keys(def.States)) {
 		st := def.States[name]
-		fmt.Fprintf(h, "state:%s|init:%v|term:%v|wait:%v\n",
-			st.Name, st.IsInitial, st.IsTerminal, st.IsWait)
+		children := slices.Clone(st.Children)
+		slices.Sort(children)
+		fmt.Fprintf(h, "state:%s|init:%v|term:%v|wait:%v|parent:%s|children:%v|initialChild:%s|compound:%v|entry:%s|exit:%s\n",
+			st.Name, st.IsInitial, st.IsTerminal, st.IsWait,
+			st.Parent, children, st.InitialChild, st.IsCompound,
+			st.EntryActivity, st.ExitActivity)
 	}
 
 	// Transitions (sorted by name)

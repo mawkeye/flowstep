@@ -87,6 +87,7 @@ func (e *Engine) runPostCommit(
 			AggregateType: instance.AggregateType,
 			AggregateID:   instance.AggregateID,
 			CorrelationID: instance.CorrelationID,
+			State:         targetState,
 			TaskType:      ct.Def.TaskDef.Type,
 			Description:   ct.Def.TaskDef.Description,
 			Options:       ct.Def.TaskDef.Options,

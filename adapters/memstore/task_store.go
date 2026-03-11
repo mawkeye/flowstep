@@ -86,6 +86,33 @@ func (s *TaskStore) ListPending(_ context.Context) ([]types.PendingTask, error) 
 	return result, nil
 }
 
+// InvalidateByStates cancels all pending tasks for the given aggregate whose State is in the
+// provided list. Completed tasks are not touched. Implements types.TaskInvalidator.
+func (s *TaskStore) InvalidateByStates(_ context.Context, _ any, aggregateType, aggregateID string, states []string) error {
+	if len(states) == 0 {
+		return nil
+	}
+	stateSet := make(map[string]bool, len(states))
+	for _, st := range states {
+		stateSet[st] = true
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for id, t := range s.tasks {
+		if t.AggregateType != aggregateType || t.AggregateID != aggregateID {
+			continue
+		}
+		if t.Status != types.TaskStatusPending {
+			continue
+		}
+		if stateSet[t.State] {
+			t.Status = types.TaskStatusCancelled
+			s.tasks[id] = t
+		}
+	}
+	return nil
+}
+
 func (s *TaskStore) ListExpired(_ context.Context) ([]types.PendingTask, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

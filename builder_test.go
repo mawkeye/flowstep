@@ -148,3 +148,88 @@ func TestBuildMultiSourceTransition(t *testing.T) {
 		t.Errorf("expected 2 sources, got %d", len(tr.Sources))
 	}
 }
+
+// ─── Task 2: Builder DSL hierarchy tests ─────────────────────────────────────
+
+func TestState_WithParentModifier(t *testing.T) {
+	so := State("VALIDATING", Parent("PROCESSING"))
+	if so.Def().Name != "VALIDATING" {
+		t.Errorf("Name = %q, want VALIDATING", so.Def().Name)
+	}
+	if so.Def().Parent != "PROCESSING" {
+		t.Errorf("Parent = %q, want PROCESSING", so.Def().Parent)
+	}
+}
+
+func TestState_WithEntryExitActivity(t *testing.T) {
+	so := State("PROCESSING", EntryActivityOpt("on_enter"), ExitActivityOpt("on_exit"))
+	if so.Def().EntryActivity != "on_enter" {
+		t.Errorf("EntryActivity = %q, want on_enter", so.Def().EntryActivity)
+	}
+	if so.Def().ExitActivity != "on_exit" {
+		t.Errorf("ExitActivity = %q, want on_exit", so.Def().ExitActivity)
+	}
+}
+
+func TestCompoundState_SetsIsCompoundAndInitialChild(t *testing.T) {
+	so := CompoundState("PROCESSING", InitialChild("VALIDATING"))
+	if !so.Def().IsCompound {
+		t.Error("IsCompound = false, want true")
+	}
+	if so.Def().InitialChild != "VALIDATING" {
+		t.Errorf("InitialChild = %q, want VALIDATING", so.Def().InitialChild)
+	}
+}
+
+func TestBuild_PopulatesChildrenFromParent(t *testing.T) {
+	def, err := Define("order", "hierarchical").
+		States(
+			Initial("CREATED"),
+			CompoundState("PROCESSING", InitialChild("VALIDATING")),
+			State("VALIDATING", Parent("PROCESSING")),
+			State("APPROVED", Parent("PROCESSING")),
+			Terminal("DONE"),
+		).
+		Transition("start", From("CREATED"), To("PROCESSING"), Event("Start")).
+		Transition("approve", From("VALIDATING"), To("APPROVED"), Event("Approve")).
+		Transition("finish", From("APPROVED"), To("DONE"), Event("Finish")).
+		Build()
+
+	if err != nil {
+		t.Fatalf("unexpected Build error: %v", err)
+	}
+
+	processing := def.States["PROCESSING"]
+	if !processing.IsCompound {
+		t.Error("PROCESSING.IsCompound should be true")
+	}
+	if len(processing.Children) != 2 {
+		t.Errorf("PROCESSING.Children len = %d, want 2", len(processing.Children))
+	}
+
+	validating := def.States["VALIDATING"]
+	if validating.Parent != "PROCESSING" {
+		t.Errorf("VALIDATING.Parent = %q, want PROCESSING", validating.Parent)
+	}
+}
+
+func TestBuild_BackwardCompatible_FlatWorkflow(t *testing.T) {
+	// Existing flat workflow should build without changes
+	def, err := Define("order", "flat").
+		States(Initial("CREATED"), State("PROCESSING"), Terminal("DONE")).
+		Transition("start", From("CREATED"), To("PROCESSING"), Event("Start")).
+		Transition("finish", From("PROCESSING"), To("DONE"), Event("Finish")).
+		Build()
+
+	if err != nil {
+		t.Fatalf("flat workflow Build() failed: %v", err)
+	}
+	for name, st := range def.States {
+		if st.Parent != "" {
+			t.Errorf("state %q.Parent = %q, want empty for flat workflow", name, st.Parent)
+		}
+		if len(st.Children) != 0 {
+			t.Errorf("state %q.Children = %v, want empty for flat workflow", name, st.Children)
+		}
+	}
+}

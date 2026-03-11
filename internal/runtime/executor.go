@@ -149,15 +149,27 @@ func (e *Engine) validateTransition(
 			instance.AggregateType, instance.AggregateID, instance.CurrentState, e.deps.ErrAlreadyTerminal)
 	}
 
-	// 3. Validate source state
+	// 3. Validate source state — check leaf first, then bubble up through ancestors.
+	effectiveSource := instance.CurrentState
 	if !slices.Contains(tr.Sources, instance.CurrentState) {
-		return nil, "", fmt.Errorf("flowstep: transition %q not valid from state %q (expected one of %v): %w",
-			transitionName, instance.CurrentState, tr.Sources, e.deps.ErrInvalidTransition)
+		// Event bubbling: walk ancestors nearest-first; first match wins.
+		found := false
+		for _, ancestor := range cm.Ancestry[instance.CurrentState] {
+			if slices.Contains(tr.Sources, ancestor) {
+				effectiveSource = ancestor
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil, "", fmt.Errorf("flowstep: transition %q not valid from state %q (expected one of %v): %w",
+				transitionName, instance.CurrentState, tr.Sources, e.deps.ErrInvalidTransition)
+		}
 	}
 
-	// 4. Find the compiled transition (with precomputed guard names) for this source state.
+	// 4. Find the compiled transition (with precomputed guard names) using effectiveSource.
 	var ct *graph.CompiledTransition
-	for _, c := range cm.TransitionsByState[instance.CurrentState] {
+	for _, c := range cm.TransitionsByState[effectiveSource] {
 		if c.Def.Name == transitionName {
 			ct = c
 			break
@@ -166,7 +178,7 @@ func (e *Engine) validateTransition(
 	if ct == nil {
 		// Fallback: should not happen after Compile() succeeds, but defend against it.
 		return nil, "", fmt.Errorf("flowstep: compiled transition %q missing for state %q: %w",
-			transitionName, instance.CurrentState, e.deps.ErrInvalidTransition)
+			transitionName, effectiveSource, e.deps.ErrInvalidTransition)
 	}
 
 	// 5. Run guards using precomputed names
@@ -187,7 +199,8 @@ func (e *Engine) validateTransition(
 	return ct, targetState, nil
 }
 
-// commitTransition builds the domain event, mutates the instance, and persists both in a transaction.
+// commitTransition builds the domain event, runs exit/entry activities, mutates the instance,
+// and persists both in a transaction.
 func (e *Engine) commitTransition(
 	ctx context.Context,
 	cm *graph.CompiledMachine,
@@ -196,8 +209,16 @@ func (e *Engine) commitTransition(
 	targetState, transitionName, actorID string,
 	params map[string]any,
 ) (types.DomainEvent, error) {
-	// 1. Build event
+	sourceLeaf := instance.CurrentState
 	now := e.deps.Clock.Now()
+
+	// 1. Resolve compound target to its initial leaf.
+	resolvedTarget := targetState
+	if leaf, ok := cm.InitialLeafMap[targetState]; ok {
+		resolvedTarget = leaf
+	}
+
+	// 2. Build event (ID used as causation metadata for activities).
 	event := types.DomainEvent{
 		ID:              generateID(),
 		AggregateType:   instance.AggregateType,
@@ -214,16 +235,102 @@ func (e *Engine) commitTransition(
 		CreatedAt:       now,
 	}
 
-	// 2. Mutate instance — snapshot UpdatedAt for optimistic locking before overwriting
-	instance.LastReadUpdatedAt = instance.UpdatedAt
-	instance.CurrentState = targetState
-	instance.UpdatedAt = now
+	// 3. Compute exit/entry sequences.
+	lca, _ := cm.LCA(sourceLeaf, resolvedTarget)
+	exitSeq := computeExitSequence(sourceLeaf, lca, cm.Ancestry)
+	entrySeq := computeEntrySequence(lca, resolvedTarget, cm.Ancestry)
 
-	// 3. Persist event + updated instance in a transaction
+	actInput := types.ActivityInput{
+		WorkflowType:  cm.Definition.WorkflowType,
+		AggregateType: instance.AggregateType,
+		AggregateID:   instance.AggregateID,
+		CorrelationID: instance.CorrelationID,
+		Transition:    transitionName,
+		SourceState:   sourceLeaf,
+		EventID:       event.ID,
+		Params:        params,
+	}
+
+	// 4. Begin transaction.
 	tx, err := e.deps.TxProvider.Begin(ctx)
 	if err != nil {
 		return types.DomainEvent{}, fmt.Errorf("flowstep: begin tx: %w", err)
 	}
+
+	// 5. Execute exit activities (abort transition on any failure via full rollback).
+	// Savepoints are not used here because exit failure always rolls back the entire transaction.
+	for _, stateName := range exitSeq {
+		st := cm.Definition.States[stateName]
+		if st.ExitActivity == "" {
+			continue
+		}
+		if err := e.runSyncActivity(ctx, st.ExitActivity, actInput); err != nil {
+			_ = e.deps.TxProvider.Rollback(ctx, tx)
+			return types.DomainEvent{}, fmt.Errorf("flowstep: exit activity %q failed for state %q: %w",
+				st.ExitActivity, stateName, err)
+		}
+	}
+
+	// 6. Execute entry activities (STUCK on failure).
+	stuck := false
+	var stuckReason string
+	for _, stateName := range entrySeq {
+		st := cm.Definition.States[stateName]
+		if st.EntryActivity == "" {
+			continue
+		}
+		if e.hasSavepoints {
+			sp := e.deps.TxProvider.(types.SavepointProvider)
+			_ = sp.Savepoint(ctx, tx, "entry_"+stateName)
+		}
+		if err := e.runSyncActivity(ctx, st.EntryActivity, actInput); err != nil {
+			stuckReason = fmt.Sprintf("entry activity %q failed for state %q: %v",
+				st.EntryActivity, stateName, err)
+			if e.hasSavepoints {
+				sp := e.deps.TxProvider.(types.SavepointProvider)
+				_ = sp.RollbackTo(ctx, tx, "entry_"+stateName)
+				stuck = true
+				break
+			}
+			// Without savepoints: rollback tx, mark STUCK in a new transaction.
+			_ = e.deps.TxProvider.Rollback(ctx, tx)
+			instance.LastReadUpdatedAt = instance.UpdatedAt
+			instance.CurrentState = sourceLeaf
+			instance.IsStuck = true
+			instance.StuckReason = stuckReason
+			instance.UpdatedAt = now
+			if stuckTx, txErr := e.deps.TxProvider.Begin(ctx); txErr == nil {
+				_ = e.deps.InstanceStore.Update(ctx, stuckTx, *instance)
+				_ = e.deps.TxProvider.Commit(ctx, stuckTx)
+			}
+			return types.DomainEvent{}, fmt.Errorf("flowstep: %s", stuckReason)
+		}
+	}
+
+	// 7. Invalidate dangling tasks for all exited states (TaskInvalidator — optional).
+	if e.deps.TaskStore != nil {
+		if inv, ok := e.deps.TaskStore.(types.TaskInvalidator); ok {
+			exitedStates := collectSubtreeStates(exitSeq, cm.Definition)
+			if len(exitedStates) > 0 {
+				if invErr := inv.InvalidateByStates(ctx, tx, instance.AggregateType, instance.AggregateID, exitedStates); invErr != nil {
+					e.deps.Observers.NotifyPostCommitError(ctx, types.PostCommitErrorEvent{Operation: "TaskInvalidator.InvalidateByStates", Err: invErr})
+				}
+			}
+		}
+	}
+
+	// 8. Mutate instance — snapshot UpdatedAt for optimistic locking before overwriting.
+	instance.LastReadUpdatedAt = instance.UpdatedAt
+	if stuck {
+		instance.CurrentState = sourceLeaf
+		instance.IsStuck = true
+		instance.StuckReason = stuckReason
+	} else {
+		instance.CurrentState = resolvedTarget
+	}
+	instance.UpdatedAt = now
+
+	// 9. Persist event + updated instance in a transaction.
 	if err := e.deps.EventStore.Append(ctx, tx, event); err != nil {
 		_ = e.deps.TxProvider.Rollback(ctx, tx)
 		return types.DomainEvent{}, fmt.Errorf("flowstep: append event: %w", err)
@@ -236,6 +343,9 @@ func (e *Engine) commitTransition(
 		return types.DomainEvent{}, fmt.Errorf("flowstep: commit tx: %w", err)
 	}
 
+	if stuck {
+		return event, fmt.Errorf("flowstep: %s", stuckReason)
+	}
 	return event, nil
 }
 
@@ -246,13 +356,18 @@ func (e *Engine) createInstance(
 	aggregateType, aggregateID string,
 ) (*types.WorkflowInstance, error) {
 	now := e.deps.Clock.Now()
+	initialState := cm.Definition.InitialState
+	// If InitialState is compound, resolve to the initial leaf state.
+	if leaf, ok := cm.InitialLeafMap[initialState]; ok {
+		initialState = leaf
+	}
 	newInstance := types.WorkflowInstance{
 		ID:              generateID(),
 		WorkflowType:    cm.Definition.WorkflowType,
 		WorkflowVersion: cm.Definition.Version,
 		AggregateType:   aggregateType,
 		AggregateID:     aggregateID,
-		CurrentState:    cm.Definition.InitialState,
+		CurrentState:    initialState,
 		StateData:       make(map[string]any),
 		CorrelationID:   generateID(),
 		CreatedAt:       now,
@@ -302,6 +417,11 @@ func (e *Engine) ForceState(ctx context.Context, aggregateType, aggregateID, tar
 	if _, exists := cm.Definition.States[targetState]; !exists {
 		return nil, fmt.Errorf("flowstep: target state %q not found in workflow %q: %w",
 			targetState, cm.Definition.WorkflowType, e.deps.ErrInvalidTransition)
+	}
+
+	// Resolve compound target to its initial leaf.
+	if leaf, ok := cm.InitialLeafMap[targetState]; ok {
+		targetState = leaf
 	}
 
 	// Build event

@@ -50,6 +50,87 @@ func generateID() string {
 	return hex.EncodeToString(b)
 }
 
+// computeExitSequence returns states to exit when leaving source, ordered leaf→LCA (exclusive).
+// If lca is "" (no common ancestor), exits only the source state.
+func computeExitSequence(source, lca string, ancestry map[string][]string) []string {
+	seq := []string{source}
+	for _, ancestor := range ancestry[source] {
+		if ancestor == lca {
+			break
+		}
+		seq = append(seq, ancestor)
+	}
+	return seq
+}
+
+// computeEntrySequence returns states to enter when reaching target, ordered LCA→target (exclusive of LCA).
+// If lca is "" (no common ancestor), enters all states from root of target's hierarchy to target.
+func computeEntrySequence(lca, target string, ancestry map[string][]string) []string {
+	chain := ancestry[target] // [parent, grandparent, ...] nearest first
+	// Find position of lca in chain; if not found, use full chain (flat-to-hierarchy entry).
+	lcaIdx := len(chain)
+	for i, a := range chain {
+		if a == lca {
+			lcaIdx = i
+			break
+		}
+	}
+	fromLCA := chain[:lcaIdx] // [parent_of_target, ..., child_of_lca] nearest first
+	result := make([]string, len(fromLCA)+1)
+	for i, s := range fromLCA {
+		result[len(fromLCA)-1-i] = s // reverse to LCA→target order
+	}
+	result[len(fromLCA)] = target
+	return result
+}
+
+// runSyncActivity resolves an activity by name via ActivityResolver and executes it synchronously.
+// Returns nil if ActivityRunner is nil or does not implement ActivityResolver (graceful degradation).
+func (e *Engine) runSyncActivity(ctx context.Context, activityName string, input types.ActivityInput) error {
+	if e.deps.ActivityRunner == nil {
+		return nil
+	}
+	resolver, ok := e.deps.ActivityRunner.(types.ActivityResolver)
+	if !ok {
+		return nil // ActivityRunner does not support sync resolution
+	}
+	act, ok := resolver.Resolve(activityName)
+	if !ok {
+		return nil // activity not registered by name
+	}
+	_, err := act.Execute(ctx, input)
+	return err
+}
+
+// collectSubtreeStates returns the union of every state in the subtree rooted at each
+// state in roots — including the root states themselves and all their descendants.
+// For leaf states this is just {leaf}; for compound states it includes all children recursively.
+func collectSubtreeStates(roots []string, def *types.Definition) []string {
+	seen := make(map[string]bool)
+	var visit func(name string)
+	visit = func(name string) {
+		if seen[name] {
+			return
+		}
+		seen[name] = true
+		st, ok := def.States[name]
+		if !ok {
+			return
+		}
+		for _, child := range st.Children {
+			visit(child)
+		}
+	}
+	for _, r := range roots {
+		visit(r)
+	}
+	result := make([]string, 0, len(seen))
+	for s := range seen {
+		result = append(result, s)
+	}
+	return result
+}
+
 func copyMap(m map[string]any) map[string]any {
 	if m == nil {
 		return nil

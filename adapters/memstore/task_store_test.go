@@ -113,6 +113,88 @@ func TestTaskStoreListPending(t *testing.T) {
 	}
 }
 
+// ─── TaskInvalidator tests ────────────────────────────────────────────────────
+
+func newTaskInState(id, aggType, aggID, state string) types.PendingTask {
+	return types.PendingTask{
+		ID:            id,
+		WorkflowType:  "wf",
+		AggregateType: aggType,
+		AggregateID:   aggID,
+		State:         state,
+		Status:        types.TaskStatusPending,
+		CreatedAt:     time.Now(),
+	}
+}
+
+func TestInvalidateByStates_InvalidatesMatchingStates(t *testing.T) {
+	s := NewTaskStore()
+	ctx := context.Background()
+	_ = s.Create(ctx, nil, newTaskInState("t1", "order", "o1", "VALIDATING"))
+	_ = s.Create(ctx, nil, newTaskInState("t2", "order", "o1", "APPROVED"))
+
+	if err := s.InvalidateByStates(ctx, nil, "order", "o1", []string{"VALIDATING"}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	got1, _ := s.Get(ctx, "t1")
+	if got1.Status != types.TaskStatusCancelled {
+		t.Errorf("t1: expected CANCELLED, got %s", got1.Status)
+	}
+	got2, _ := s.Get(ctx, "t2")
+	if got2.Status != types.TaskStatusPending {
+		t.Errorf("t2: expected PENDING (untouched), got %s", got2.Status)
+	}
+}
+
+func TestInvalidateByStates_PreservesNonMatchingStates(t *testing.T) {
+	s := NewTaskStore()
+	ctx := context.Background()
+	_ = s.Create(ctx, nil, newTaskInState("t1", "order", "o1", "APPROVED"))
+
+	if err := s.InvalidateByStates(ctx, nil, "order", "o1", []string{"VALIDATING", "PROCESSING"}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	got, _ := s.Get(ctx, "t1")
+	if got.Status != types.TaskStatusPending {
+		t.Errorf("expected PENDING, got %s", got.Status)
+	}
+}
+
+func TestInvalidateByStates_SkipsCompletedTasks(t *testing.T) {
+	s := NewTaskStore()
+	ctx := context.Background()
+	t1 := newTaskInState("t1", "order", "o1", "VALIDATING")
+	t1.Status = types.TaskStatusCompleted
+	_ = s.Create(ctx, nil, t1)
+
+	if err := s.InvalidateByStates(ctx, nil, "order", "o1", []string{"VALIDATING"}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	got, _ := s.Get(ctx, "t1")
+	// Completed tasks should not be overwritten to CANCELLED.
+	if got.Status != types.TaskStatusCompleted {
+		t.Errorf("expected COMPLETED (untouched), got %s", got.Status)
+	}
+}
+
+func TestInvalidateByStates_EmptyStateList_DoesNothing(t *testing.T) {
+	s := NewTaskStore()
+	ctx := context.Background()
+	_ = s.Create(ctx, nil, newTaskInState("t1", "order", "o1", "VALIDATING"))
+
+	if err := s.InvalidateByStates(ctx, nil, "order", "o1", []string{}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	got, _ := s.Get(ctx, "t1")
+	if got.Status != types.TaskStatusPending {
+		t.Errorf("expected PENDING, got %s", got.Status)
+	}
+}
+
 func TestTaskStoreListExpired(t *testing.T) {
 	s := NewTaskStore()
 	ctx := context.Background()

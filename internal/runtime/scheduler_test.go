@@ -7,8 +7,20 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mawkeye/flowstep/internal/graph"
 	"github.com/mawkeye/flowstep/types"
 )
+
+// mustCompile compiles a definition for use in white-box tests. It bypasses Validate()
+// so test definitions don't need a complete valid structure (e.g. IsInitial not required).
+func mustCompile(t *testing.T, def *types.Definition) *graph.CompiledMachine {
+	t.Helper()
+	cm, err := graph.Compile(def, graph.Sentinels{})
+	if err != nil {
+		t.Fatalf("mustCompile: %v", err)
+	}
+	return cm
+}
 
 // ─── memChildStoreForJoin ─────────────────────────────────────────────────────
 
@@ -76,11 +88,11 @@ func makeGroupSiblings(groupID string, completed, total int) []types.ChildRelati
 func TestEvaluateJoinPolicy_allMode_notSatisfied(t *testing.T) {
 	cs := &memChildStoreForJoin{relations: makeGroupSiblings("grp", 2, 3)}
 	e := buildEngineWithChildStore(cs)
-	def := simpleDef()
+	cm := mustCompile(t, simpleDef())
 	inst := simpleInstance("pending")
 	relation := &types.ChildRelation{GroupID: "grp", JoinPolicy: "ALL"}
 
-	_, err := e.evaluateJoinPolicy(context.Background(), relation, def, inst)
+	_, err := e.evaluateJoinPolicy(context.Background(), relation, cm, inst)
 	// Not all complete, so must return ErrNoMatchingSignal
 	if err == nil {
 		t.Fatal("expected error for unsatisfied ALL join, got nil")
@@ -116,7 +128,7 @@ func TestEvaluateJoinPolicy_anyMode_satisfied(t *testing.T) {
 	// evaluateJoinPolicy will call Transition when satisfied — but we have no full engine wiring.
 	// We just verify it doesn't return ErrNoMatchingSignal for the join policy check itself.
 	// The actual Transition call will fail because InstanceStore doesn't have "agg-1" pre-created.
-	_, err := e.evaluateJoinPolicy(context.Background(), relation, def, inst)
+	_, err := e.evaluateJoinPolicy(context.Background(), relation, mustCompile(t, def), inst)
 	// ANY with 1/3 complete is satisfied — error (if any) will be from Transition, not join check.
 	// We expect no "join policy not yet satisfied" error.
 	if err != nil && strings.Contains(err.Error(), "not yet satisfied") {
@@ -150,7 +162,7 @@ func TestEvaluateJoinPolicy_allMode_satisfied(t *testing.T) {
 	relation := &types.ChildRelation{GroupID: "grp", JoinPolicy: "ALL",
 		ParentAggregateType: "TestAgg", ParentAggregateID: "agg-1"}
 
-	_, err := e.evaluateJoinPolicy(context.Background(), relation, joinDef, inst)
+	_, err := e.evaluateJoinPolicy(context.Background(), relation, mustCompile(t, joinDef), inst)
 	// ALL with 3/3 is satisfied — any error is from Transition firing, not the join check
 	if err != nil && strings.Contains(err.Error(), "not yet satisfied") {
 		t.Errorf("ALL policy with all completed should be satisfied, got: %v", err)
@@ -187,7 +199,7 @@ func TestEvaluateJoinPolicy_nMode_notSatisfied(t *testing.T) {
 	relation := &types.ChildRelation{GroupID: "grp", JoinPolicy: "N",
 		ParentAggregateType: "TestAgg", ParentAggregateID: "agg-1"}
 
-	_, err := e.evaluateJoinPolicy(context.Background(), relation, nDef, inst)
+	_, err := e.evaluateJoinPolicy(context.Background(), relation, mustCompile(t, nDef), inst)
 	if err == nil {
 		t.Fatal("expected error for N mode with 1/5 completed (need 3), got nil")
 	}

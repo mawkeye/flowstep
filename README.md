@@ -197,6 +197,20 @@ flowstep.Transition("charge",
 
 Guard failures are wrapped as `flowstep.ErrGuardFailed` and can be checked with `errors.Is`.
 
+Guards can optionally implement `NamedGuard` to provide human-readable names for observer events:
+
+```go
+type NamedGuard interface {
+    Guard
+    Name() string
+}
+
+// Example:
+func (g *minimumAmountGuard) Name() string { return "minimum-amount" }
+```
+
+Guards that don't implement `NamedGuard` are identified by their Go type name in observer events.
+
 ### Conditional Routing
 
 Route a transition to different target states based on runtime conditions:
@@ -595,6 +609,7 @@ if err != nil {
 | `ErrActivityNotRegistered` | Activity name not registered with the runner |
 | `ErrActivityTimeout` | Activity timed out before completing |
 | `ErrActivityNotFound` | Activity invocation not found |
+| `ErrSpawnCycle` | Cross-workflow spawn cycle detected during `Register()` |
 | `ErrEngineShutdown` | Engine has been shut down |
 
 

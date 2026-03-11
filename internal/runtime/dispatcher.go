@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/mawkeye/flowstep/internal/graph"
 	"github.com/mawkeye/flowstep/types"
 )
 
@@ -12,9 +13,9 @@ import (
 // already been committed and is considered successful.
 func (e *Engine) runPostCommit(
 	ctx context.Context,
-	def *types.Definition,
+	cm *graph.CompiledMachine,
 	instance *types.WorkflowInstance,
-	tr types.TransitionDef,
+	ct *graph.CompiledTransition,
 	event types.DomainEvent,
 	previousState string,
 	params map[string]any,
@@ -34,18 +35,18 @@ func (e *Engine) runPostCommit(
 
 	// 2. Dispatch activities
 	var activitiesDispatched []string
-	if len(tr.Activities) > 0 && e.deps.ActivityRunner != nil {
-		for _, actDef := range tr.Activities {
+	if len(ct.Def.Activities) > 0 && e.deps.ActivityRunner != nil {
+		for _, actDef := range ct.Def.Activities {
 			invocation := types.ActivityInvocation{
 				ID:            generateID(),
 				ActivityName:  actDef.Name,
-				WorkflowType:  def.WorkflowType,
+				WorkflowType:  cm.Definition.WorkflowType,
 				AggregateType: instance.AggregateType,
 				AggregateID:   instance.AggregateID,
 				CorrelationID: instance.CorrelationID,
 				Mode:          actDef.Mode,
 				Input: types.ActivityInput{
-					WorkflowType:  def.WorkflowType,
+					WorkflowType:  cm.Definition.WorkflowType,
 					AggregateType: instance.AggregateType,
 					AggregateID:   instance.AggregateID,
 					CorrelationID: instance.CorrelationID,
@@ -79,22 +80,22 @@ func (e *Engine) runPostCommit(
 
 	// 3. Create pending task
 	var taskCreated *types.PendingTask
-	if tr.TaskDef != nil && e.deps.TaskStore != nil {
+	if ct.Def.TaskDef != nil && e.deps.TaskStore != nil {
 		task := types.PendingTask{
 			ID:            generateID(),
-			WorkflowType:  def.WorkflowType,
+			WorkflowType:  cm.Definition.WorkflowType,
 			AggregateType: instance.AggregateType,
 			AggregateID:   instance.AggregateID,
 			CorrelationID: instance.CorrelationID,
-			TaskType:      tr.TaskDef.Type,
-			Description:   tr.TaskDef.Description,
-			Options:       tr.TaskDef.Options,
+			TaskType:      ct.Def.TaskDef.Type,
+			Description:   ct.Def.TaskDef.Description,
+			Options:       ct.Def.TaskDef.Options,
 			Status:        types.TaskStatusPending,
-			Timeout:       tr.TaskDef.Timeout,
+			Timeout:       ct.Def.TaskDef.Timeout,
 			CreatedAt:     now,
 		}
-		if tr.TaskDef.Timeout > 0 {
-			task.ExpiresAt = now.Add(tr.TaskDef.Timeout)
+		if ct.Def.TaskDef.Timeout > 0 {
+			task.ExpiresAt = now.Add(ct.Def.TaskDef.Timeout)
 		}
 		if createErr := e.deps.TaskStore.Create(ctx, nil, task); createErr != nil {
 			warnings = append(warnings, types.PostCommitWarning{Operation: "TaskStore.Create", Err: createErr})
@@ -106,15 +107,15 @@ func (e *Engine) runPostCommit(
 
 	// 4. Spawn child workflow(s)
 	var childrenSpawned []types.ChildRelation
-	if tr.ChildDef != nil && e.deps.ChildStore != nil {
+	if ct.Def.ChildDef != nil && e.deps.ChildStore != nil {
 		childAggID := generateID()
 		relation := types.ChildRelation{
 			ID:                  generateID(),
-			ParentWorkflowType:  def.WorkflowType,
+			ParentWorkflowType:  cm.Definition.WorkflowType,
 			ParentAggregateType: instance.AggregateType,
 			ParentAggregateID:   instance.AggregateID,
-			ChildWorkflowType:   tr.ChildDef.WorkflowType,
-			ChildAggregateType:  tr.ChildDef.WorkflowType,
+			ChildWorkflowType:   ct.Def.ChildDef.WorkflowType,
+			ChildAggregateType:  ct.Def.ChildDef.WorkflowType,
 			ChildAggregateID:    childAggID,
 			CorrelationID:       instance.CorrelationID,
 			Status:              types.ChildStatusActive,
@@ -127,22 +128,22 @@ func (e *Engine) runPostCommit(
 			childrenSpawned = append(childrenSpawned, relation)
 		}
 	}
-	if tr.ChildrenDef != nil && e.deps.ChildStore != nil {
+	if ct.Def.ChildrenDef != nil && e.deps.ChildStore != nil {
 		groupID := generateID()
-		inputs := tr.ChildrenDef.InputsFn(nil)
+		inputs := ct.Def.ChildrenDef.InputsFn(nil)
 		for range inputs {
 			childAggID := generateID()
 			relation := types.ChildRelation{
 				ID:                  generateID(),
 				GroupID:             groupID,
-				ParentWorkflowType:  def.WorkflowType,
+				ParentWorkflowType:  cm.Definition.WorkflowType,
 				ParentAggregateType: instance.AggregateType,
 				ParentAggregateID:   instance.AggregateID,
-				ChildWorkflowType:   tr.ChildrenDef.WorkflowType,
-				ChildAggregateType:  tr.ChildrenDef.WorkflowType,
+				ChildWorkflowType:   ct.Def.ChildrenDef.WorkflowType,
+				ChildAggregateType:  ct.Def.ChildrenDef.WorkflowType,
 				ChildAggregateID:    childAggID,
 				CorrelationID:       instance.CorrelationID,
-				JoinPolicy:          tr.ChildrenDef.Join.Mode,
+				JoinPolicy:          ct.Def.ChildrenDef.Join.Mode,
 				Status:              types.ChildStatusActive,
 				CreatedAt:           now,
 			}
@@ -157,7 +158,7 @@ func (e *Engine) runPostCommit(
 
 	// 5. Build result
 	isTerminal := false
-	if st, exists := def.States[targetState]; exists && st.IsTerminal {
+	if st, exists := cm.Definition.States[targetState]; exists && st.IsTerminal {
 		isTerminal = true
 	}
 	result := &types.TransitionResult{

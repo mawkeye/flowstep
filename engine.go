@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/mawkeye/flowstep/internal/graph"
 	internalruntime "github.com/mawkeye/flowstep/internal/runtime"
 	"github.com/mawkeye/flowstep/types"
 )
@@ -58,6 +59,18 @@ func NewEngine(opts ...Option) (*Engine, error) {
 		ErrTaskNotFound:      ErrTaskNotFound,
 		ErrInvalidChoice:     ErrInvalidChoice,
 		ErrEngineShutdown:    ErrEngineShutdown,
+
+		Sentinels: graph.Sentinels{
+			ErrNoInitialState:        ErrNoInitialState,
+			ErrMultipleInitialStates: ErrMultipleInitialStates,
+			ErrNoTerminalStates:      ErrNoTerminalStates,
+			ErrUnreachableState:      ErrUnreachableState,
+			ErrDeadEndState:          ErrDeadEndState,
+			ErrUnknownState:          ErrUnknownState,
+			ErrMissingDefault:        ErrMissingDefault,
+			ErrDuplicateTransition:   ErrDuplicateTransition,
+			ErrSpawnCycle:            ErrSpawnCycle,
+		},
 	}
 
 	return &Engine{inner: internalruntime.New(deps)}, nil

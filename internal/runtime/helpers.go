@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 
+	"github.com/mawkeye/flowstep/internal/graph"
 	"github.com/mawkeye/flowstep/types"
 )
 
@@ -32,11 +33,11 @@ func (e *Engine) resolveRoute(ctx context.Context, tr types.TransitionDef, aggre
 	return "", fmt.Errorf("flowstep: no condition matched and no default route: %w", e.deps.ErrNoMatchingRoute)
 }
 
-func (e *Engine) runGuards(ctx context.Context, workflowType string, tr types.TransitionDef, aggregate any, params map[string]any) error {
-	for _, guard := range tr.Guards {
+func (e *Engine) runGuards(ctx context.Context, workflowType string, ct *graph.CompiledTransition, aggregate any, params map[string]any) error {
+	for i, guard := range ct.Def.Guards {
 		if err := guard.Check(ctx, aggregate, params); err != nil {
-			guardName := fmt.Sprintf("%T", guard)
-			e.deps.Observers.NotifyGuardFailed(ctx, types.GuardFailureEvent{WorkflowType: workflowType, TransitionName: tr.Name, GuardName: guardName, Err: err})
+			guardName := ct.GuardNames[i]
+			e.deps.Observers.NotifyGuardFailed(ctx, types.GuardFailureEvent{WorkflowType: workflowType, TransitionName: ct.Def.Name, GuardName: guardName, Err: err})
 			return &types.GuardError{GuardName: guardName, Reason: err}
 		}
 	}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/mawkeye/flowstep/internal/graph"
 	"github.com/mawkeye/flowstep/types"
 )
 
@@ -205,7 +206,7 @@ func TestValidateTransition_passesInstanceToGuard(t *testing.T) {
 		InitialState:   "pending",
 		TerminalStates: []string{"done"},
 		States: map[string]types.StateDef{
-			"pending": {Name: "pending"},
+			"pending": {Name: "pending", IsInitial: true},
 			"done":    {Name: "done", IsTerminal: true},
 		},
 		Transitions: map[string]types.TransitionDef{
@@ -218,9 +219,13 @@ func TestValidateTransition_passesInstanceToGuard(t *testing.T) {
 			},
 		},
 	}
+	cm, err := graph.Compile(def, graph.Sentinels{})
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
 	inst := simpleInstance("pending")
 
-	_, _, err := e.validateTransition(context.Background(), def, inst, "complete", nil)
+	_, _, err = e.validateTransition(context.Background(), cm, inst, "complete", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -232,19 +237,29 @@ func TestValidateTransition_passesInstanceToGuard(t *testing.T) {
 	}
 }
 
+// compileDef compiles simpleDef() for use in white-box validateTransition tests.
+func compileDef(t *testing.T, def *types.Definition) *graph.CompiledMachine {
+	t.Helper()
+	cm, err := graph.Compile(def, graph.Sentinels{})
+	if err != nil {
+		t.Fatalf("compileDef: %v", err)
+	}
+	return cm
+}
+
 // ─── validateTransition tests ─────────────────────────────────────────────────
 
 func TestValidateTransition_valid(t *testing.T) {
 	e := newTestEngine(newMemInstanceStore(errInstanceNotFound))
-	def := simpleDef()
+	cm := compileDef(t, simpleDef())
 	inst := simpleInstance("pending")
 
-	tr, target, err := e.validateTransition(context.Background(), def, inst, "complete", nil)
+	ct, target, err := e.validateTransition(context.Background(), cm, inst, "complete", nil)
 	if err != nil {
 		t.Fatalf("expected nil error, got %v", err)
 	}
-	if tr.Name != "complete" {
-		t.Errorf("expected tr.Name=complete, got %q", tr.Name)
+	if ct.Def.Name != "complete" {
+		t.Errorf("expected ct.Def.Name=complete, got %q", ct.Def.Name)
 	}
 	if target != "done" {
 		t.Errorf("expected target=done, got %q", target)
@@ -253,10 +268,10 @@ func TestValidateTransition_valid(t *testing.T) {
 
 func TestValidateTransition_unknownTransition(t *testing.T) {
 	e := newTestEngine(newMemInstanceStore(errInstanceNotFound))
-	def := simpleDef()
+	cm := compileDef(t, simpleDef())
 	inst := simpleInstance("pending")
 
-	_, _, err := e.validateTransition(context.Background(), def, inst, "nonexistent", nil)
+	_, _, err := e.validateTransition(context.Background(), cm, inst, "nonexistent", nil)
 	if !errors.Is(err, errInvalidTransition) {
 		t.Errorf("expected ErrInvalidTransition, got %v", err)
 	}
@@ -264,10 +279,10 @@ func TestValidateTransition_unknownTransition(t *testing.T) {
 
 func TestValidateTransition_wrongSourceState(t *testing.T) {
 	e := newTestEngine(newMemInstanceStore(errInstanceNotFound))
-	def := simpleDef()
+	cm := compileDef(t, simpleDef())
 	inst := simpleInstance("done") // terminal — but also wrong source
 
-	_, _, err := e.validateTransition(context.Background(), def, inst, "complete", nil)
+	_, _, err := e.validateTransition(context.Background(), cm, inst, "complete", nil)
 	if err == nil {
 		t.Fatal("expected error for wrong source state, got nil")
 	}
@@ -275,10 +290,10 @@ func TestValidateTransition_wrongSourceState(t *testing.T) {
 
 func TestValidateTransition_alreadyTerminal(t *testing.T) {
 	e := newTestEngine(newMemInstanceStore(errInstanceNotFound))
-	def := simpleDef()
+	cm := compileDef(t, simpleDef())
 	inst := simpleInstance("done")
 
-	_, _, err := e.validateTransition(context.Background(), def, inst, "complete", nil)
+	_, _, err := e.validateTransition(context.Background(), cm, inst, "complete", nil)
 	if !errors.Is(err, errAlreadyTerminal) {
 		t.Errorf("expected ErrAlreadyTerminal, got %v", err)
 	}

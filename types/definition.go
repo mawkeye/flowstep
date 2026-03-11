@@ -24,6 +24,15 @@ type Guard interface {
 	Check(ctx context.Context, aggregate any, params map[string]any) error
 }
 
+// NamedGuard is an optional extension of Guard that provides a human-readable name.
+// When a guard implements NamedGuard, its Name() is used in observer events instead
+// of the default fmt.Sprintf("%T", guard) fallback. Backward-compatible: guards
+// without this interface continue to work unchanged.
+type NamedGuard interface {
+	Guard
+	Name() string
+}
+
 // Condition evaluates a routing decision. MUST be deterministic.
 // Only read from aggregate and params. No I/O.
 type Condition interface {

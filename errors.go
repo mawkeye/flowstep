@@ -44,6 +44,11 @@ var (
 	ErrInvalidChoice        = errors.New("flowstep: choice not in task options")
 )
 
+// Graph compilation errors.
+var (
+	ErrSpawnCycle = errors.New("flowstep: cross-workflow spawn cycle detected")
+)
+
 // Activity errors.
 var (
 	ErrActivityNotRegistered = errors.New("flowstep: activity not registered")

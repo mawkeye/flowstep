@@ -45,6 +45,14 @@ type (
 	// Clock provides deterministic time for the engine.
 	Clock = types.Clock
 
+	// Guard is the interface for transition precondition checks.
+	Guard = types.Guard
+
+	// NamedGuard is an optional extension of Guard that provides a human-readable name.
+	// Implement this on your guard structs to get meaningful names in observer events
+	// instead of the default fmt.Sprintf("%T", guard) fallback.
+	NamedGuard = types.NamedGuard
+
 	// Observer is the marker type for all engine observer adapters.
 	Observer = types.Observer
 

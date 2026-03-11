@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mawkeye/flowstep/internal/graph"
 	"github.com/mawkeye/flowstep/types"
 )
 
@@ -80,8 +81,11 @@ func (f *failingGuard) Check(_ context.Context, _ any, _ map[string]any) error {
 
 func TestRunGuards_allPass(t *testing.T) {
 	e := newTestEngine(newMemInstanceStore(errInstanceNotFound))
-	tr := types.TransitionDef{Name: "go", Guards: []types.Guard{&aggregateCapturingGuard{}}}
-	if err := e.runGuards(context.Background(), "wf", tr, nil, nil); err != nil {
+	ct := &graph.CompiledTransition{
+		Def:        &types.TransitionDef{Name: "go", Guards: []types.Guard{&aggregateCapturingGuard{}}},
+		GuardNames: []string{"aggregateCapturingGuard"},
+	}
+	if err := e.runGuards(context.Background(), "wf", ct, nil, nil); err != nil {
 		t.Fatalf("expected nil, got %v", err)
 	}
 }
@@ -101,11 +105,11 @@ func TestRunGuards_firstFailureReturnsErrGuardFailed(t *testing.T) {
 		ErrNoMatchingRoute:   errNoMatchingRoute,
 		ErrEngineShutdown:    errEngineShutdown,
 	})
-	tr := types.TransitionDef{
-		Name:   "go",
-		Guards: []types.Guard{&failingGuard{"blocked"}},
+	ct := &graph.CompiledTransition{
+		Def:        &types.TransitionDef{Name: "go", Guards: []types.Guard{&failingGuard{"blocked"}}},
+		GuardNames: []string{"*runtime.failingGuard"},
 	}
-	err := e.runGuards(context.Background(), "my-workflow", tr, nil, nil)
+	err := e.runGuards(context.Background(), "my-workflow", ct, nil, nil)
 	if !errors.Is(err, types.ErrGuardFailed) {
 		t.Errorf("expected types.ErrGuardFailed, got %v", err)
 	}
@@ -117,6 +121,46 @@ func TestRunGuards_firstFailureReturnsErrGuardFailed(t *testing.T) {
 	}
 	if obs.guardFailedErr == nil {
 		t.Error("expected OnGuardFailed to receive the guard error, got nil")
+	}
+}
+
+type namedFailingGuard struct{}
+
+func (n *namedFailingGuard) Check(_ context.Context, _ any, _ map[string]any) error {
+	return errors.New("denied")
+}
+
+func (n *namedFailingGuard) Name() string { return "my-custom-guard" }
+
+func TestRunGuards_usesPrecomputedGuardName(t *testing.T) {
+	obs := &capturingGuardObserver{}
+	e := New(Deps{
+		EventStore:           &noopEventStore{},
+		InstanceStore:        newMemInstanceStore(errInstanceNotFound),
+		TxProvider:           &noopTx{},
+		Clock:                &fixedClock{t: time.Now()},
+		Observers:            NewObserverRegistry([]types.Observer{obs}),
+		ErrInstanceNotFound:  errInstanceNotFound,
+		ErrInvalidTransition: errInvalidTransition,
+		ErrAlreadyTerminal:   errAlreadyTerminal,
+		ErrGuardFailed:       errGuardFailed,
+		ErrNoMatchingRoute:   errNoMatchingRoute,
+		ErrEngineShutdown:    errEngineShutdown,
+	})
+	guard := &namedFailingGuard{}
+	ct := &graph.CompiledTransition{
+		Def: &types.TransitionDef{
+			Name:   "go",
+			Guards: []types.Guard{guard},
+		},
+		GuardNames: []string{"my-custom-guard"},
+	}
+	err := e.runGuards(context.Background(), "my-workflow", ct, nil, nil)
+	if !errors.Is(err, types.ErrGuardFailed) {
+		t.Errorf("expected types.ErrGuardFailed, got %v", err)
+	}
+	if obs.guardFailedGuardName != "my-custom-guard" {
+		t.Errorf("expected guardName=my-custom-guard, got %q", obs.guardFailedGuardName)
 	}
 }
 

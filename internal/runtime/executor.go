@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 
+	"github.com/mawkeye/flowstep/internal/graph"
 	"github.com/mawkeye/flowstep/types"
 )
 
@@ -81,103 +82,117 @@ func (e *Engine) Transition(
 
 	start := e.deps.Clock.Now()
 
-	def, instance, err := e.loadInstanceAndDef(ctx, aggregateType, aggregateID)
+	cm, instance, err := e.loadInstanceAndCompiled(ctx, aggregateType, aggregateID)
 	if err != nil {
 		return nil, err
 	}
 
-	tr, targetState, err := e.validateTransition(ctx, def, instance, transitionName, params)
+	ct, targetState, err := e.validateTransition(ctx, cm, instance, transitionName, params)
 	if err != nil {
 		return nil, err
 	}
 
 	previousState := instance.CurrentState
 
-	event, err := e.commitTransition(ctx, def, instance, tr, targetState, transitionName, actorID, params)
+	event, err := e.commitTransition(ctx, cm, instance, ct, targetState, transitionName, actorID, params)
 	if err != nil {
 		return nil, err
 	}
 
-	return e.runPostCommit(ctx, def, instance, tr, event, previousState, params, start)
+	return e.runPostCommit(ctx, cm, instance, ct, event, previousState, params, start)
 }
 
-// loadInstanceAndDef retrieves or creates the workflow instance and resolves the matching definition.
-func (e *Engine) loadInstanceAndDef(ctx context.Context, aggregateType, aggregateID string) (*types.Definition, *types.WorkflowInstance, error) {
+// loadInstanceAndCompiled retrieves or creates the workflow instance and resolves the matching compiled machine.
+func (e *Engine) loadInstanceAndCompiled(ctx context.Context, aggregateType, aggregateID string) (*graph.CompiledMachine, *types.WorkflowInstance, error) {
 	instance, err := e.deps.InstanceStore.Get(ctx, aggregateType, aggregateID)
 	if err != nil {
 		if !errors.Is(err, e.deps.ErrInstanceNotFound) {
 			return nil, nil, fmt.Errorf("flowstep: get instance: %w", err)
 		}
-		def, ok := e.definitionFor(aggregateType, 0)
+		cm, ok := e.compiledFor(aggregateType, 0)
 		if !ok {
 			return nil, nil, fmt.Errorf("flowstep: no workflow registered for aggregate type %q", aggregateType)
 		}
-		instance, err = e.createInstance(ctx, def, aggregateType, aggregateID)
+		instance, err = e.createInstance(ctx, cm, aggregateType, aggregateID)
 		if err != nil {
 			return nil, nil, err
 		}
-		return def, instance, nil
+		return cm, instance, nil
 	}
-	def, ok := e.definitionFor(aggregateType, instance.WorkflowVersion)
+	cm, ok := e.compiledFor(aggregateType, instance.WorkflowVersion)
 	if !ok {
 		return nil, nil, fmt.Errorf("flowstep: no workflow version %d registered for aggregate type %q",
 			instance.WorkflowVersion, aggregateType)
 	}
-	return def, instance, nil
+	return cm, instance, nil
 }
 
 // validateTransition validates the transition is allowed from the instance's current state,
-// runs guards, and resolves the target state. Returns the transition definition and target state.
+// runs guards, and resolves the target state. Returns the compiled transition and target state.
 func (e *Engine) validateTransition(
 	ctx context.Context,
-	def *types.Definition,
+	cm *graph.CompiledMachine,
 	instance *types.WorkflowInstance,
 	transitionName string,
 	params map[string]any,
-) (types.TransitionDef, string, error) {
-	// 1. Look up transition
-	tr, ok := def.Transitions[transitionName]
+) (*graph.CompiledTransition, string, error) {
+	// 1. Look up transition by name in the definition
+	tr, ok := cm.Definition.Transitions[transitionName]
 	if !ok {
-		return types.TransitionDef{}, "", fmt.Errorf("flowstep: transition %q not found in workflow %q: %w",
-			transitionName, def.WorkflowType, e.deps.ErrInvalidTransition)
+		return nil, "", fmt.Errorf("flowstep: transition %q not found in workflow %q: %w",
+			transitionName, cm.Definition.WorkflowType, e.deps.ErrInvalidTransition)
 	}
 
 	// 2. Check if already terminal
-	if st, exists := def.States[instance.CurrentState]; exists && st.IsTerminal {
-		return types.TransitionDef{}, "", fmt.Errorf("flowstep: workflow %s/%s is in terminal state %q: %w",
+	if st, exists := cm.Definition.States[instance.CurrentState]; exists && st.IsTerminal {
+		return nil, "", fmt.Errorf("flowstep: workflow %s/%s is in terminal state %q: %w",
 			instance.AggregateType, instance.AggregateID, instance.CurrentState, e.deps.ErrAlreadyTerminal)
 	}
 
 	// 3. Validate source state
 	if !slices.Contains(tr.Sources, instance.CurrentState) {
-		return types.TransitionDef{}, "", fmt.Errorf("flowstep: transition %q not valid from state %q (expected one of %v): %w",
+		return nil, "", fmt.Errorf("flowstep: transition %q not valid from state %q (expected one of %v): %w",
 			transitionName, instance.CurrentState, tr.Sources, e.deps.ErrInvalidTransition)
 	}
 
-	// 4. Run guards
-	if err := e.runGuards(ctx, def.WorkflowType, tr, instance, params); err != nil {
-		return types.TransitionDef{}, "", err
+	// 4. Find the compiled transition (with precomputed guard names) for this source state.
+	var ct *graph.CompiledTransition
+	for _, c := range cm.TransitionsByState[instance.CurrentState] {
+		if c.Def.Name == transitionName {
+			ct = c
+			break
+		}
+	}
+	if ct == nil {
+		// Fallback: should not happen after Compile() succeeds, but defend against it.
+		return nil, "", fmt.Errorf("flowstep: compiled transition %q missing for state %q: %w",
+			transitionName, instance.CurrentState, e.deps.ErrInvalidTransition)
 	}
 
-	// 5. Determine target state (direct or routed)
+	// 5. Run guards using precomputed names
+	if err := e.runGuards(ctx, cm.Definition.WorkflowType, ct, instance, params); err != nil {
+		return nil, "", err
+	}
+
+	// 6. Determine target state (direct or routed)
 	targetState := tr.Target
 	if len(tr.Routes) > 0 {
 		resolved, err := e.resolveRoute(ctx, tr, instance, params)
 		if err != nil {
-			return types.TransitionDef{}, "", err
+			return nil, "", err
 		}
 		targetState = resolved
 	}
 
-	return tr, targetState, nil
+	return ct, targetState, nil
 }
 
 // commitTransition builds the domain event, mutates the instance, and persists both in a transaction.
 func (e *Engine) commitTransition(
 	ctx context.Context,
-	def *types.Definition,
+	cm *graph.CompiledMachine,
 	instance *types.WorkflowInstance,
-	tr types.TransitionDef,
+	ct *graph.CompiledTransition,
 	targetState, transitionName, actorID string,
 	params map[string]any,
 ) (types.DomainEvent, error) {
@@ -187,9 +202,9 @@ func (e *Engine) commitTransition(
 		ID:              generateID(),
 		AggregateType:   instance.AggregateType,
 		AggregateID:     instance.AggregateID,
-		WorkflowType:    def.WorkflowType,
-		WorkflowVersion: def.Version,
-		EventType:       tr.Event,
+		WorkflowType:    cm.Definition.WorkflowType,
+		WorkflowVersion: cm.Definition.Version,
+		EventType:       ct.Def.Event,
 		CorrelationID:   instance.CorrelationID,
 		ActorID:         actorID,
 		TransitionName:  transitionName,
@@ -227,17 +242,17 @@ func (e *Engine) commitTransition(
 // createInstance creates a new workflow instance in a transaction.
 func (e *Engine) createInstance(
 	ctx context.Context,
-	def *types.Definition,
+	cm *graph.CompiledMachine,
 	aggregateType, aggregateID string,
 ) (*types.WorkflowInstance, error) {
 	now := e.deps.Clock.Now()
 	newInstance := types.WorkflowInstance{
 		ID:              generateID(),
-		WorkflowType:    def.WorkflowType,
-		WorkflowVersion: def.Version,
+		WorkflowType:    cm.Definition.WorkflowType,
+		WorkflowVersion: cm.Definition.Version,
 		AggregateType:   aggregateType,
 		AggregateID:     aggregateID,
-		CurrentState:    def.InitialState,
+		CurrentState:    cm.Definition.InitialState,
 		StateData:       make(map[string]any),
 		CorrelationID:   generateID(),
 		CreatedAt:       now,
@@ -276,17 +291,17 @@ func (e *Engine) ForceState(ctx context.Context, aggregateType, aggregateID, tar
 		return nil, fmt.Errorf("flowstep: get instance: %w", err)
 	}
 
-	// Look up definition for instance's version
-	def, ok := e.definitionFor(aggregateType, instance.WorkflowVersion)
+	// Look up compiled machine for instance's version
+	cm, ok := e.compiledFor(aggregateType, instance.WorkflowVersion)
 	if !ok {
 		return nil, fmt.Errorf("flowstep: no workflow version %d registered for aggregate type %q",
 			instance.WorkflowVersion, aggregateType)
 	}
 
 	// Validate target state exists in definition
-	if _, exists := def.States[targetState]; !exists {
+	if _, exists := cm.Definition.States[targetState]; !exists {
 		return nil, fmt.Errorf("flowstep: target state %q not found in workflow %q: %w",
-			targetState, def.WorkflowType, e.deps.ErrInvalidTransition)
+			targetState, cm.Definition.WorkflowType, e.deps.ErrInvalidTransition)
 	}
 
 	// Build event
@@ -296,8 +311,8 @@ func (e *Engine) ForceState(ctx context.Context, aggregateType, aggregateID, tar
 		ID:              generateID(),
 		AggregateType:   aggregateType,
 		AggregateID:     aggregateID,
-		WorkflowType:    def.WorkflowType,
-		WorkflowVersion: def.Version,
+		WorkflowType:    cm.Definition.WorkflowType,
+		WorkflowVersion: cm.Definition.Version,
 		EventType:       "StateForced",
 		CorrelationID:   instance.CorrelationID,
 		ActorID:         actorID,
@@ -342,7 +357,7 @@ func (e *Engine) ForceState(ctx context.Context, aggregateType, aggregateID, tar
 	}
 
 	isTerminal := false
-	if st, exists := def.States[targetState]; exists && st.IsTerminal {
+	if st, exists := cm.Definition.States[targetState]; exists && st.IsTerminal {
 		isTerminal = true
 	}
 

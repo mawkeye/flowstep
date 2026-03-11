@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 
+	"github.com/mawkeye/flowstep/internal/graph"
 	"github.com/mawkeye/flowstep/types"
 )
 
@@ -17,26 +18,26 @@ func (e *Engine) Signal(ctx context.Context, input types.SignalInput) (*types.Tr
 	e.wg.Add(1)
 	defer e.wg.Done()
 
-	// Load or create instance, then resolve definition version
+	// Load or create instance, then resolve compiled machine version
 	instance, err := e.deps.InstanceStore.Get(ctx, input.TargetAggregateType, input.TargetAggregateID)
-	var def *types.Definition
+	var cm *graph.CompiledMachine
 	if err != nil {
 		if errors.Is(err, e.deps.ErrInstanceNotFound) {
-			latestDef, ok := e.definitionFor(input.TargetAggregateType, 0)
+			latestCm, ok := e.compiledFor(input.TargetAggregateType, 0)
 			if !ok {
 				return nil, fmt.Errorf("flowstep: no workflow registered for aggregate type %q", input.TargetAggregateType)
 			}
-			instance, err = e.createInstance(ctx, latestDef, input.TargetAggregateType, input.TargetAggregateID)
+			instance, err = e.createInstance(ctx, latestCm, input.TargetAggregateType, input.TargetAggregateID)
 			if err != nil {
 				return nil, err
 			}
-			def = latestDef
+			cm = latestCm
 		} else {
 			return nil, fmt.Errorf("flowstep: get instance: %w", err)
 		}
 	} else {
 		var ok bool
-		def, ok = e.definitionFor(input.TargetAggregateType, instance.WorkflowVersion)
+		cm, ok = e.compiledFor(input.TargetAggregateType, instance.WorkflowVersion)
 		if !ok {
 			return nil, fmt.Errorf("flowstep: no workflow version %d registered for aggregate type %q",
 				instance.WorkflowVersion, input.TargetAggregateType)
@@ -45,7 +46,7 @@ func (e *Engine) Signal(ctx context.Context, input types.SignalInput) (*types.Tr
 
 	// Find matching signal transition from current state
 	var matches []string
-	for name, tr := range def.Transitions {
+	for name, tr := range cm.Definition.Transitions {
 		if tr.TriggerType == types.TriggerSignal && tr.TriggerKey == input.SignalName {
 			if slices.Contains(tr.Sources, instance.CurrentState) {
 				matches = append(matches, name)
@@ -90,8 +91,8 @@ func (e *Engine) CompleteTask(ctx context.Context, taskID, choice, actorID strin
 		return nil, fmt.Errorf("flowstep: get instance: %w", err)
 	}
 
-	// Look up definition for instance's version
-	def, ok := e.definitionFor(task.AggregateType, instance.WorkflowVersion)
+	// Look up compiled machine for instance's version
+	cm, ok := e.compiledFor(task.AggregateType, instance.WorkflowVersion)
 	if !ok {
 		return nil, fmt.Errorf("flowstep: no workflow version %d registered for aggregate type %q",
 			instance.WorkflowVersion, task.AggregateType)
@@ -99,7 +100,7 @@ func (e *Engine) CompleteTask(ctx context.Context, taskID, choice, actorID strin
 
 	// Find matching OnTaskCompleted transitions from current state
 	var matches []string
-	for name, tr := range def.Transitions {
+	for name, tr := range cm.Definition.Transitions {
 		if tr.TriggerType == types.TriggerTaskCompleted && tr.TriggerKey == task.TaskType {
 			if slices.Contains(tr.Sources, instance.CurrentState) {
 				matches = append(matches, name)
@@ -172,8 +173,8 @@ func (e *Engine) ChildCompleted(ctx context.Context, childAggregateType, childAg
 		return nil, fmt.Errorf("flowstep: get parent instance: %w", err)
 	}
 
-	// Look up parent definition for instance's version
-	def, ok := e.definitionFor(relation.ParentAggregateType, instance.WorkflowVersion)
+	// Look up compiled machine for parent instance's version
+	cm, ok := e.compiledFor(relation.ParentAggregateType, instance.WorkflowVersion)
 	if !ok {
 		return nil, fmt.Errorf("flowstep: no workflow version %d registered for parent aggregate type %q",
 			instance.WorkflowVersion, relation.ParentAggregateType)
@@ -181,11 +182,11 @@ func (e *Engine) ChildCompleted(ctx context.Context, childAggregateType, childAg
 
 	// If this child belongs to a group, evaluate join policy
 	if relation.GroupID != "" {
-		return e.evaluateJoinPolicy(ctx, relation, def, instance)
+		return e.evaluateJoinPolicy(ctx, relation, cm, instance)
 	}
 
 	// Single child: find matching OnChildCompleted transition
-	for name, tr := range def.Transitions {
+	for name, tr := range cm.Definition.Transitions {
 		if tr.TriggerType == types.TriggerChildCompleted && tr.TriggerKey == childAggregateType {
 			if slices.Contains(tr.Sources, instance.CurrentState) {
 				return e.Transition(ctx, relation.ParentAggregateType, relation.ParentAggregateID, name, "system", map[string]any{
@@ -205,7 +206,7 @@ func (e *Engine) ChildCompleted(ctx context.Context, childAggregateType, childAg
 func (e *Engine) evaluateJoinPolicy(
 	ctx context.Context,
 	relation *types.ChildRelation,
-	def *types.Definition,
+	cm *graph.CompiledMachine,
 	instance *types.WorkflowInstance,
 ) (*types.TransitionResult, error) {
 	siblings, err := e.deps.ChildStore.GetByGroup(ctx, relation.GroupID)
@@ -230,7 +231,7 @@ func (e *Engine) evaluateJoinPolicy(
 		satisfied = completedCount >= 1
 	case "N":
 		// Find the ChildrenDef to get the count
-		for _, tr := range def.Transitions {
+		for _, tr := range cm.Definition.Transitions {
 			if tr.ChildrenDef != nil && tr.ChildrenDef.Join.Mode == "N" {
 				satisfied = completedCount >= tr.ChildrenDef.Join.Count
 				break
@@ -244,7 +245,7 @@ func (e *Engine) evaluateJoinPolicy(
 	}
 
 	// Find matching OnChildrenJoined transition
-	for name, tr := range def.Transitions {
+	for name, tr := range cm.Definition.Transitions {
 		if tr.TriggerType == types.TriggerChildrenJoined {
 			if slices.Contains(tr.Sources, instance.CurrentState) {
 				return e.Transition(ctx, relation.ParentAggregateType, relation.ParentAggregateID, name, "system", map[string]any{

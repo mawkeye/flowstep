@@ -57,6 +57,7 @@ type Sentinels struct {
 	ErrUnknownState          error
 	ErrMissingDefault        error
 	ErrDuplicateTransition   error
+	ErrSpawnCycle            error
 }
 
 func checkInitialState(def *types.Definition, s Sentinels) error {

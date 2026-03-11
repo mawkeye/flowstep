@@ -5,6 +5,23 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [v0.8.0] - 2026-03-11
+
+### Added
+- Graph Compilation: `CompiledMachine` intermediate representation in `internal/graph/compiled.go` — precomputes ancestry, depth map, transition-by-state index, definition hash (SHA-256), and guard names at registration time (Task 1: CompiledMachine)
+- `NamedGuard` optional interface (`Guard` + `Name() string`) — guards can provide human-readable names for observer events; unimplemented guards fall back to `fmt.Sprintf("%T")` (Task 2: NamedGuard)
+- Cross-workflow spawn cycle detection — `Register()` validates the spawn graph (ChildDef/ChildrenDef) across all registered definitions and returns `ErrSpawnCycle` on cycles (Task 3: Spawn Cycles)
+- `ErrSpawnCycle` sentinel error for cross-workflow spawn cycle detection
+- `NamedGuard` type alias exported from root package
+
+### Changed
+- `Register()` now validates, compiles, checks for spawn cycles, and stores a `CompiledMachine` alongside the raw definition. Hash-based dedup skips recompilation for identical definitions. (Task 4: Register Integration)
+- All runtime methods (`Transition`, `Signal`, `ChildCompleted`, `ForceState`, `CompleteTask`) now operate on `CompiledMachine` instead of raw `*Definition` — uses precomputed transition index and guard names (Task 5: Runtime Migration)
+- Guard failure observer events now report `NamedGuard.Name()` when available instead of Go type name
+
+### Fixed
+- `Register()` no longer commits definitions to the registry before spawn-cycle validation — rejected definitions cannot corrupt engine state
+
 ## [v0.7.0] - 2026-03-10
 
 ### Added

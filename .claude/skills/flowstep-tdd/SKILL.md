@@ -1,5 +1,5 @@
 ---
-name: flowstate-tdd
+name: flowstep-tdd
 description: |
   Enforces strict TDD Red-Green-Refactor for all flowstep Go code changes.
   Use when: (1) implementing any new function, interface, adapter, or engine behavior,
@@ -45,7 +45,7 @@ Write the **minimum** test that describes the desired behavior. The test MUST fa
 | What you're testing | Package | File location |
 |---------------------|---------|---------------|
 | Public API contract (Engine, Define, Transition) | `flowstep_test` (external) | Root `*_test.go` |
-| Internal engine logic, private helpers | `engine` (same package) | `internal/engine/*_test.go` |
+| Internal engine logic, private helpers | `engine` (same package) | `internal/runtime/*_test.go` |
 | Adapter behavior | Same package (e.g., `memstore`) | `adapters/memstore/*_test.go` |
 | Builder validation | `flowstep_test` or `builder` | Root or `internal/builder/*_test.go` |
 
@@ -63,7 +63,7 @@ def := testutil.ApprovalWorkflow(t)  // With wait state + task
 te.Engine.Register(ctx, def)
 ```
 
-**For white-box engine tests** (`internal/engine/`), use minimal stubs (not testutil):
+**For white-box engine tests** (`internal/runtime/`), use minimal stubs (not testutil):
 
 ```go
 // Stub interfaces inline — only implement what the test needs:
@@ -101,7 +101,7 @@ If it fails for the wrong reason → fix the test setup, not the production code
 go test ./... -count=1
 ```
 
-**Critical:** Run the FULL suite, not just the file you touched. flowstep has cross-package dependencies (engine ↔ builder ↔ stores). A change in `internal/engine/` can break `integration_test.go`.
+**Critical:** Run the FULL suite, not just the file you touched. flowstep has cross-package dependencies (engine ↔ builder ↔ stores). A change in `internal/runtime/` can break `integration_test.go`.
 
 **Check:**
 - Exit code 0
@@ -210,7 +210,7 @@ go test -coverprofile=coverage.out ./... && go tool cover -func=coverage.out
 go test ./adapters/memstore/... -v -count=1
 
 # Internal engine only:
-go test ./internal/engine/... -v -count=1
+go test ./internal/runtime/... -v -count=1
 ```
 
 `-count=1` disables test caching. Always use it during TDD to ensure fresh runs.
@@ -229,6 +229,6 @@ go test ./internal/engine/... -v -count=1
 
 - `testutil/engine.go` — TestEngine factory with all in-memory adapters
 - `testutil/fixtures.go` — Pre-built workflow definitions (OrderWorkflow, ApprovalWorkflow)
-- `internal/engine/engine_test.go` — White-box engine tests with inline stubs
+- `internal/runtime/engine_test.go` — White-box engine tests with inline stubs
 - `integration_test.go` — Black-box integration tests
 - `adapters/memstore/*_test.go` — Adapter test patterns

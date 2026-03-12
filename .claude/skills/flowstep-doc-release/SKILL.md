@@ -1,5 +1,5 @@
 ---
-name: flowstate-doc-release
+name: flowstep-doc-release
 description: |
   Ensures project documentation is updated after milestones. Use when:
   (1) a task implementation is complete and ready to commit,

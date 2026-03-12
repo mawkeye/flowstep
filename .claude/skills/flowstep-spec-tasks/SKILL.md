@@ -1,5 +1,5 @@
 ---
-name: flowstate-spec-tasks
+name: flowstep-spec-tasks
 description: |
   Enforces task file separation and release discipline during /spec workflows.
   Use when: (1) spec-plan creates implementation tasks — split each into its own

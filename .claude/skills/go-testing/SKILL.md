@@ -29,7 +29,7 @@ go test ./... -count=1
 go test ./adapters/memstore/... -v -count=1
 
 # Single test:
-go test ./internal/engine/... -run TestEngine_Transition -v -count=1
+go test ./internal/runtime/... -run TestEngine_Transition -v -count=1
 
 # Race detector:
 go test ./... -race -count=1

@@ -5,6 +5,15 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [v0.12.1] - 2026-03-12
+
+### Changed
+- Migrated CLAUDE.md/AGENTS.md to modular rules in `.claude/rules/` (flowstep-project, flowstep-architecture, flowstep-versioning)
+- Fixed stale `internal/engine` references to `internal/runtime` across CLAUDE.md, AGENTS.md, and skills
+- Removed obsolete Phase references from project documentation
+- Renamed skills from `flowstate-*` to `flowstep-*` prefix to match Go module name
+- Removed irrelevant `vercel-design-guidelines` skill
+
 ## [v0.12.0] - 2026-03-12
 
 ### Added

@@ -5,6 +5,8 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"maps"
+	"sort"
 
 	"github.com/mawkeye/flowstep/internal/graph"
 	"github.com/mawkeye/flowstep/types"
@@ -154,17 +156,13 @@ func recordHistory(instance *types.WorkflowInstance, sourceLeaf string, exitSeq 
 
 		// ShallowHistory: copy-on-write — build a new map.
 		newShallow := make(map[string]string, len(instance.ShallowHistory)+1)
-		for k, v := range instance.ShallowHistory {
-			newShallow[k] = v
-		}
+		maps.Copy(newShallow, instance.ShallowHistory)
 		newShallow[stateName] = directChild
 		instance.ShallowHistory = newShallow
 
 		// DeepHistory: copy-on-write — build a new map.
 		newDeep := make(map[string]string, len(instance.DeepHistory)+1)
-		for k, v := range instance.DeepHistory {
-			newDeep[k] = v
-		}
+		maps.Copy(newDeep, instance.DeepHistory)
 		newDeep[stateName] = sourceLeaf
 		instance.DeepHistory = newDeep
 	}
@@ -207,10 +205,17 @@ func computeParallelEntrySequence(cm *graph.CompiledMachine, lca, parallelState 
 // computeParallelExitSequence returns the exit sequence when leaving a parallel state.
 // For each active leaf in ActiveInParallel: exit leaf → region → (stop before parallelState).
 // Then exits the parallelState itself.
+// Regions are sorted alphabetically for deterministic activity ordering.
 func computeParallelExitSequence(instance *types.WorkflowInstance, parallelState string) []string {
+	regions := make([]string, 0, len(instance.ActiveInParallel))
+	for r := range instance.ActiveInParallel {
+		regions = append(regions, r)
+	}
+	sort.Strings(regions)
+
 	var seq []string
-	// Exit each region's active leaf and the region itself.
-	for region, leaf := range instance.ActiveInParallel {
+	for _, region := range regions {
+		leaf := instance.ActiveInParallel[region]
 		seq = append(seq, leaf)
 		if leaf != region {
 			seq = append(seq, region)

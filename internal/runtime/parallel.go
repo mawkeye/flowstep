@@ -291,7 +291,8 @@ func (e *Engine) commitParallelIntra(
 }
 
 // commitParallelExit handles a transition that exits the parallel state entirely.
-// It runs exit activities for all active leaves, regions, and the parallel state itself.
+// It runs exit activities for all active leaves, regions, and the parallel state itself,
+// then opens a transaction to commit the event and updated instance atomically.
 func (e *Engine) commitParallelExit(
 	ctx context.Context,
 	cm *graph.CompiledMachine,
@@ -306,8 +307,20 @@ func (e *Engine) commitParallelExit(
 	// Full exit sequence: all active leaves → regions → parallel state.
 	exitSeq := computeParallelExitSequence(instance, parallelState)
 
-	// Record history for each region (each is a compound state in the exit sequence).
-	recordHistory(instance, parallelState, exitSeq, cm.Definition)
+	// Record history per region: each region compound state gets its own active leaf
+	// recorded as its deep-history target (not the parallel state name). Use the
+	// per-region exit sub-sequence (leaf → region, stopping before parallelState) so
+	// that recordHistory only processes the compound states within that region.
+	regionNames := make([]string, 0, len(instance.ActiveInParallel))
+	for r := range instance.ActiveInParallel {
+		regionNames = append(regionNames, r)
+	}
+	sort.Strings(regionNames)
+	for _, region := range regionNames {
+		leaf := instance.ActiveInParallel[region]
+		regionExitSeq := computeExitSequence(leaf, parallelState, cm.Ancestry)
+		recordHistory(instance, leaf, regionExitSeq, cm.Definition)
+	}
 
 	actInput := types.ActivityInput{
 		WorkflowType:  cm.Definition.WorkflowType,
@@ -326,18 +339,14 @@ func (e *Engine) commitParallelExit(
 	}
 	entrySeq := computeEntrySequence("", resolvedTarget, cm.Ancestry)
 
-	tx, err := e.deps.TxProvider.Begin(ctx)
-	if err != nil {
-		return types.DomainEvent{}, fmt.Errorf("flowstep: begin tx: %w", err)
-	}
-
+	// Run all exit and entry activities before opening the transaction so that a
+	// failed activity does not leave an open (uncommitted) transaction behind.
 	for _, stateName := range exitSeq {
 		st := cm.Definition.States[stateName]
 		if st.ExitActivity == "" {
 			continue
 		}
 		if err := e.runSyncActivity(ctx, st.ExitActivity, actInput); err != nil {
-			_ = e.deps.TxProvider.Rollback(ctx, tx)
 			return types.DomainEvent{}, fmt.Errorf("flowstep: exit activity %q: %w", st.ExitActivity, err)
 		}
 	}
@@ -348,7 +357,6 @@ func (e *Engine) commitParallelExit(
 			continue
 		}
 		if err := e.runSyncActivity(ctx, st.EntryActivity, actInput); err != nil {
-			_ = e.deps.TxProvider.Rollback(ctx, tx)
 			return types.DomainEvent{}, fmt.Errorf("flowstep: entry activity %q: %w", st.EntryActivity, err)
 		}
 	}
@@ -374,6 +382,10 @@ func (e *Engine) commitParallelExit(
 	instance.ActiveInParallel = nil
 	instance.UpdatedAt = now
 
+	tx, err := e.deps.TxProvider.Begin(ctx)
+	if err != nil {
+		return types.DomainEvent{}, fmt.Errorf("flowstep: begin tx: %w", err)
+	}
 	if err := e.deps.EventStore.Append(ctx, tx, event); err != nil {
 		_ = e.deps.TxProvider.Rollback(ctx, tx)
 		return types.DomainEvent{}, fmt.Errorf("flowstep: append event: %w", err)

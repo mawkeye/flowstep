@@ -319,6 +319,100 @@ func TestParallelDispatch_InvalidTransition(t *testing.T) {
 	}
 }
 
+// parallelWorkflowForConflict extends parallelWorkflowDef with two additional transitions
+// used to exercise ancestor-sourced matching and structural exit precedence:
+//
+//   - "boldActivate": sourced from bold_region (compound ancestor of bold_off), not the leaf.
+//     Tests the ancestor-bubbling path in collectParallelCandidates.
+//   - "exitOrContinue": sourced from both "editing" (parallel state) AND "bold_off" (leaf).
+//     Tests that structural exit precedence (Case 1) fires before intra-region matching.
+func parallelWorkflowForConflict() *types.Definition {
+	def := parallelWorkflowDef()
+	def.Transitions["boldActivate"] = types.TransitionDef{
+		Name:        "boldActivate",
+		Sources:     []string{"bold_region"},
+		Target:      "bold_on",
+		TriggerType: types.TriggerDirect,
+		Priority:    5,
+	}
+	def.Transitions["exitOrContinue"] = types.TransitionDef{
+		Name:        "exitOrContinue",
+		Sources:     []string{"editing", "bold_off"},
+		Target:      "DONE",
+		TriggerType: types.TriggerDirect,
+	}
+	return def
+}
+
+// TestParallelConflict is a table-driven test covering conflict-resolution paths:
+// ancestor-sourced matching and structural exit precedence.
+func TestParallelConflict(t *testing.T) {
+	tests := []struct {
+		name             string
+		transition       string
+		wantCurrentState string
+		wantBoldLeaf     string
+		wantItalicLeaf   string
+		wantAIPCleared   bool
+	}{
+		{
+			// boldActivate sources: ["bold_region"] — matches bold_off via ancestor bubbling.
+			// Only bold_region is updated; italic_region stays at italic_off.
+			name:             "ancestor_sourced_matches_active_leaf_via_bubbling",
+			transition:       "boldActivate",
+			wantCurrentState: "editing",
+			wantBoldLeaf:     "bold_on",
+			wantItalicLeaf:   "italic_off",
+		},
+		{
+			// exitOrContinue sources: ["editing", "bold_off"] — editing (parallel state)
+			// is in sources, so structural Case 1 fires before intra-region candidate
+			// matching; the workflow exits to DONE and ActiveInParallel is cleared.
+			name:             "structural_exit_precedence_over_intra_region_candidate",
+			transition:       "exitOrContinue",
+			wantCurrentState: "DONE",
+			wantAIPCleared:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			is := newMemInstanceStore(errInstanceNotFound)
+			e := newParallelTestEngine(is)
+			ctx := context.Background()
+
+			if err := e.Register(parallelWorkflowForConflict()); err != nil {
+				t.Fatalf("Register() error: %v", err)
+			}
+			if _, err := e.Transition(ctx, "Editor", "agg-1", "startEditing", "actor", nil); err != nil {
+				t.Fatalf("startEditing: %v", err)
+			}
+
+			result, err := e.Transition(ctx, "Editor", "agg-1", tt.transition, "actor", nil)
+			if err != nil {
+				t.Fatalf("Transition(%q) error: %v", tt.transition, err)
+			}
+
+			if result.Instance.CurrentState != tt.wantCurrentState {
+				t.Errorf("CurrentState = %q, want %q", result.Instance.CurrentState, tt.wantCurrentState)
+			}
+			if tt.wantAIPCleared {
+				if len(result.Instance.ActiveInParallel) != 0 {
+					t.Errorf("ActiveInParallel = %v, want empty after exit", result.Instance.ActiveInParallel)
+				}
+			} else {
+				aip := result.Instance.ActiveInParallel
+				if aip["bold_region"] != tt.wantBoldLeaf {
+					t.Errorf("bold_region leaf = %q, want %q", aip["bold_region"], tt.wantBoldLeaf)
+				}
+				if aip["italic_region"] != tt.wantItalicLeaf {
+					t.Errorf("italic_region leaf = %q, want %q", aip["italic_region"], tt.wantItalicLeaf)
+				}
+			}
+		})
+	}
+}
+
 // TestForceState_ClearsActiveInParallel verifies that ForceState from a parallel state
 // to a non-parallel state clears ActiveInParallel.
 func TestForceState_ClearsActiveInParallel(t *testing.T) {

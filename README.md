@@ -19,6 +19,7 @@ The package requires a minimum version of Go 1.25.
   - [Wait States \& Tasks](#wait-states--tasks)
   - [Child Workflows](#child-workflows)
   - [Activities](#activities)
+  - [Snapshot / Restore](#snapshot--restore)
 - [Engine Configuration](#engine-configuration)
 - [Adapters](#adapters)
   - [Storage](#storage)
@@ -51,6 +52,7 @@ The package requires a minimum version of Go 1.25.
 - **Immutable event chain** — every transition appends a domain event
 - **Version coexistence** — multiple workflow versions run side by side
 - **Observability hooks** — instrument transitions, guard failures, activity lifecycle
+- **Snapshot/Restore** — point-in-time capture and restore of workflow instance state with definition hash validation
 - **Admin recovery** — `ForceState` bypasses all rules for operational fixes
 - **Mermaid export** — generate state diagrams from definitions, including nested compound states
 - **Pluggable adapters** — swap storage, event bus, and activity runner implementations
@@ -440,6 +442,42 @@ engine, _ := flowstep.NewEngine(
 )
 ```
 
+### Snapshot / Restore
+
+Capture the complete runtime state of a workflow instance and restore it later — useful for backups, cloning, and cross-environment migration.
+
+```go
+ctx := context.Background()
+
+// Capture a snapshot
+snap, err := engine.Snapshot(ctx, "order", "order-1")
+if err != nil {
+    log.Fatal(err)
+}
+
+// Serialize for storage/transport
+data, _ := json.Marshal(snap)
+
+// Later: deserialize and restore to a different aggregate
+var restored flowstep.Snapshot
+json.Unmarshal(data, &restored)
+restored.AggregateID = "order-1-clone"
+
+if err := engine.Restore(ctx, restored); err != nil {
+    log.Fatal(err)
+}
+// The restored instance can immediately participate in transitions
+```
+
+Key behaviors:
+
+- **Complete state capture:** All runtime fields including `StateData`, `ShallowHistory`, `DeepHistory`, `ActiveInParallel`, `ParallelClock`, stuck state, and `CorrelationID`.
+- **Definition validation:** Restore validates both `WorkflowVersion` and `DefinitionHash` against the registered compiled machine. Mismatches return `ErrSnapshotDefinitionMismatch`.
+- **Create-only:** Restore rejects if an instance already exists for the target aggregate key (`ErrSnapshotInstanceExists`).
+- **Value type:** `Snapshot` is a value type — copy and modify fields (e.g., `AggregateID`) before passing to `Restore` for clone scenarios.
+- **Audit trail:** A `SnapshotRestored` domain event is persisted and emitted on successful restore.
+- **Deep copy isolation:** All map and pointer fields are deep-copied — mutations to a snapshot never affect stored instances.
+
 ## Engine Configuration
 
 The engine is configured with functional options. Three stores are required; everything else is optional.
@@ -696,6 +734,8 @@ if err != nil {
 | `ErrCompoundStateNoInitialChild` | Compound state has no `InitialChild` declared |
 | `ErrOrphanedChild` | State references a non-existent parent |
 | `ErrCircularHierarchy` | Circular parent-child hierarchy detected |
+| `ErrSnapshotDefinitionMismatch` | Snapshot's definition hash or version doesn't match registered |
+| `ErrSnapshotInstanceExists` | Instance already exists for the snapshot's aggregate key |
 | `ErrEngineShutdown` | Engine has been shut down |
 
 

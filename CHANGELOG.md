@@ -5,6 +5,19 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [v0.12.0] - 2026-03-12
+
+### Added
+- **Snapshot capture/restore** — point-in-time export/import of workflow instance state with version validation. `Engine.Snapshot()` captures the complete `WorkflowInstance` runtime state plus `DefinitionHash` for integrity verification. `Engine.Restore()` creates a new instance from a snapshot with 3-step validation (version → hash → existence). (Task 8: Snapshots Enhancement)
+- `types.Snapshot` struct — mirrors all runtime-relevant `WorkflowInstance` fields (including `CorrelationID`, `IsStuck`, `StuckReason`, `StuckAt`, `RetryCount`, `ShallowHistory`, `DeepHistory`, `ActiveInParallel`, `ParallelClock`) plus `DefinitionHash` and `CapturedAt` metadata. Full JSON serialization support.
+- `Engine.Snapshot(ctx, aggregateType, aggregateID) (*Snapshot, error)` — read-only capture, no transaction required
+- `Engine.Restore(ctx, snapshot) error` — create-only restore (reject if exists), emits `SnapshotRestored` domain event
+- `ErrSnapshotDefinitionMismatch` sentinel error — returned when snapshot's `DefinitionHash` or `WorkflowVersion` doesn't match the registered compiled machine
+- `ErrSnapshotInstanceExists` sentinel error — returned when an instance already exists for the snapshot's aggregate key
+- `Snapshot` type alias re-exported from root package (`flowstep.Snapshot`)
+- Compile-time field mapping guard in `types/snapshot_test.go` — reflect-based test fails when `WorkflowInstance` gains fields not mapped in `Snapshot`
+- Round-trip integration tests for flat, hierarchical (shallow + deep history), parallel, stuck, JSON serialization, and StateData workflows
+
 ## [v0.11.0] - 2026-03-12
 
 ### Added

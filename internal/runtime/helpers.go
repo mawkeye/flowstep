@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"maps"
 	"sort"
+	"time"
 
 	"github.com/mawkeye/flowstep/internal/graph"
 	"github.com/mawkeye/flowstep/types"
@@ -235,6 +236,15 @@ func activeStates(instance *types.WorkflowInstance) []string {
 		states = append(states, leaf)
 	}
 	return states
+}
+
+// copyTimePtr deep-copies a *time.Time. Returns nil if t is nil.
+func copyTimePtr(t *time.Time) *time.Time {
+	if t == nil {
+		return nil
+	}
+	cp := *t
+	return &cp
 }
 
 func copyMap(m map[string]any) map[string]any {

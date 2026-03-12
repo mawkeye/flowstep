@@ -82,6 +82,12 @@ type (
 	InfrastructureObserver = types.InfrastructureObserver
 )
 
+// Snapshot types — re-exported for the public API surface.
+type (
+	// Snapshot captures the complete runtime state of a workflow instance.
+	Snapshot = types.Snapshot
+)
+
 // Observer event structs — re-exported for adapter implementors.
 type (
 	TransitionEvent       = types.TransitionEvent

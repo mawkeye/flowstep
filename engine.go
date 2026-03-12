@@ -58,7 +58,9 @@ func NewEngine(opts ...Option) (*Engine, error) {
 		ErrNoMatchingRoute:   ErrNoMatchingRoute,
 		ErrTaskNotFound:      ErrTaskNotFound,
 		ErrInvalidChoice:     ErrInvalidChoice,
-		ErrEngineShutdown:    ErrEngineShutdown,
+		ErrEngineShutdown:             ErrEngineShutdown,
+		ErrSnapshotDefinitionMismatch: ErrSnapshotDefinitionMismatch,
+		ErrSnapshotInstanceExists:     ErrSnapshotInstanceExists,
 
 		Sentinels: graph.Sentinels{
 			ErrNoInitialState:              ErrNoInitialState,
@@ -130,6 +132,19 @@ func (e *Engine) ForceState(ctx context.Context, aggregateType, aggregateID, tar
 // Not safe to call from guards or hooks (they run inside a transition transaction).
 func (e *Engine) SideEffect(ctx context.Context, aggregateType, aggregateID, name string, fn func() (any, error)) (any, error) {
 	return e.inner.SideEffect(ctx, aggregateType, aggregateID, name, fn)
+}
+
+// Snapshot captures the complete runtime state of a workflow instance as a Snapshot.
+// It is a read-only operation — no transaction is required.
+func (e *Engine) Snapshot(ctx context.Context, aggregateType, aggregateID string) (*types.Snapshot, error) {
+	return e.inner.Snapshot(ctx, aggregateType, aggregateID)
+}
+
+// Restore creates a new workflow instance from a Snapshot.
+// The snapshot's DefinitionHash and WorkflowVersion must match the registered definition.
+// Returns ErrSnapshotInstanceExists if an instance already exists for the aggregate key.
+func (e *Engine) Restore(ctx context.Context, snap types.Snapshot) error {
+	return e.inner.Restore(ctx, snap)
 }
 
 // Shutdown gracefully stops the engine. Waits for in-flight operations to complete.

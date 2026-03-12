@@ -34,7 +34,9 @@ type Deps struct {
 	ErrNoMatchingRoute   error
 	ErrTaskNotFound      error
 	ErrInvalidChoice     error
-	ErrEngineShutdown    error
+	ErrEngineShutdown             error
+	ErrSnapshotDefinitionMismatch error
+	ErrSnapshotInstanceExists     error
 
 	// Graph compilation sentinels — passed through to graph.Validate / graph.DetectSpawnCycles
 	Sentinels graph.Sentinels

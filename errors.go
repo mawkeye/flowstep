@@ -55,6 +55,18 @@ var (
 	ErrNestedParallelState         = errors.New("flowstep: nested parallel states are not supported")
 )
 
+// Snapshot errors.
+var (
+	// ErrSnapshotDefinitionMismatch is returned by Engine.Restore when the snapshot's
+	// DefinitionHash or WorkflowVersion does not match the registered compiled machine.
+	ErrSnapshotDefinitionMismatch = errors.New("flowstep: snapshot definition hash or version mismatch")
+
+	// ErrSnapshotInstanceExists is returned by Engine.Restore when an instance already
+	// exists for the snapshot's AggregateType + AggregateID composite key.
+	// Restore is create-only; overwrite semantics are not supported in this version.
+	ErrSnapshotInstanceExists = errors.New("flowstep: instance already exists for snapshot aggregate")
+)
+
 // Activity errors.
 var (
 	ErrActivityNotRegistered = errors.New("flowstep: activity not registered")

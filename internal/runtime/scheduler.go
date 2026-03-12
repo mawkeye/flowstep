@@ -44,12 +44,16 @@ func (e *Engine) Signal(ctx context.Context, input types.SignalInput) (*types.Tr
 		}
 	}
 
-	// Find matching signal transition from current state
+	// Find matching signal transition from current state (or any active parallel leaf).
+	active := activeStates(instance)
 	var matches []string
 	for name, tr := range cm.Definition.Transitions {
 		if tr.TriggerType == types.TriggerSignal && tr.TriggerKey == input.SignalName {
-			if slices.Contains(tr.Sources, instance.CurrentState) {
-				matches = append(matches, name)
+			for _, s := range active {
+				if slices.Contains(tr.Sources, s) {
+					matches = append(matches, name)
+					break
+				}
 			}
 		}
 	}
@@ -98,12 +102,16 @@ func (e *Engine) CompleteTask(ctx context.Context, taskID, choice, actorID strin
 			instance.WorkflowVersion, task.AggregateType)
 	}
 
-	// Find matching OnTaskCompleted transitions from current state
+	// Find matching OnTaskCompleted transitions from current state (or any active parallel leaf).
+	active := activeStates(instance)
 	var matches []string
 	for name, tr := range cm.Definition.Transitions {
 		if tr.TriggerType == types.TriggerTaskCompleted && tr.TriggerKey == task.TaskType {
-			if slices.Contains(tr.Sources, instance.CurrentState) {
-				matches = append(matches, name)
+			for _, s := range active {
+				if slices.Contains(tr.Sources, s) {
+					matches = append(matches, name)
+					break
+				}
 			}
 		}
 	}
@@ -185,15 +193,18 @@ func (e *Engine) ChildCompleted(ctx context.Context, childAggregateType, childAg
 		return e.evaluateJoinPolicy(ctx, relation, cm, instance)
 	}
 
-	// Single child: find matching OnChildCompleted transition
+	// Single child: find matching OnChildCompleted transition (or any active parallel leaf).
+	active := activeStates(instance)
 	for name, tr := range cm.Definition.Transitions {
 		if tr.TriggerType == types.TriggerChildCompleted && tr.TriggerKey == childAggregateType {
-			if slices.Contains(tr.Sources, instance.CurrentState) {
-				return e.Transition(ctx, relation.ParentAggregateType, relation.ParentAggregateID, name, "system", map[string]any{
-					"_child_aggregate_type": childAggregateType,
-					"_child_aggregate_id":   childAggregateID,
-					"_child_terminal_state": terminalState,
-				})
+			for _, s := range active {
+				if slices.Contains(tr.Sources, s) {
+					return e.Transition(ctx, relation.ParentAggregateType, relation.ParentAggregateID, name, "system", map[string]any{
+						"_child_aggregate_type": childAggregateType,
+						"_child_aggregate_id":   childAggregateID,
+						"_child_terminal_state": terminalState,
+					})
+				}
 			}
 		}
 	}
@@ -244,15 +255,18 @@ func (e *Engine) evaluateJoinPolicy(
 			joinMode, completedCount, total, e.deps.ErrNoMatchingSignal)
 	}
 
-	// Find matching OnChildrenJoined transition
+	// Find matching OnChildrenJoined transition (or any active parallel leaf).
+	active := activeStates(instance)
 	for name, tr := range cm.Definition.Transitions {
 		if tr.TriggerType == types.TriggerChildrenJoined {
-			if slices.Contains(tr.Sources, instance.CurrentState) {
-				return e.Transition(ctx, relation.ParentAggregateType, relation.ParentAggregateID, name, "system", map[string]any{
-					"_group_id":        relation.GroupID,
-					"_completed_count": completedCount,
-					"_total_count":     total,
-				})
+			for _, s := range active {
+				if slices.Contains(tr.Sources, s) {
+					return e.Transition(ctx, relation.ParentAggregateType, relation.ParentAggregateID, name, "system", map[string]any{
+						"_group_id":        relation.GroupID,
+						"_completed_count": completedCount,
+						"_total_count":     total,
+					})
+				}
 			}
 		}
 	}

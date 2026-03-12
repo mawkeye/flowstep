@@ -24,6 +24,7 @@ type transitionBuilder struct {
 	triggerKey  string
 	allowSelf   bool
 	historyMode types.HistoryMode
+	priority    int
 }
 
 // TransitionOption configures a transition.
@@ -132,6 +133,15 @@ func WithHistory(mode types.HistoryMode) TransitionOption {
 	}
 }
 
+// Priority sets the priority for a transition. Higher value = higher priority.
+// Used as a deterministic tie-breaker in parallel state conflict resolution.
+// Default is 0.
+func Priority(p int) TransitionOption {
+	return func(tb *transitionBuilder) {
+		tb.priority = p
+	}
+}
+
 // Route adds a conditional route to the transition.
 // Usage: Route(When(cond), To("STATE")) or Route(Default(), To("STATE"))
 func Route(opts ...TransitionOption) TransitionOption {
@@ -217,7 +227,8 @@ func ExitActivityOpt(name string) StateModifier {
 
 // StateOption configures a state.
 type StateOption struct {
-	def types.StateDef
+	def    types.StateDef
+	nested []StateOption // non-nil only for parallel states; holds region + leaf StateOptions
 }
 
 // Def returns the StateDef for this state option.
@@ -267,6 +278,77 @@ func CompoundState(name string, mods ...StateModifier) StateOption {
 		m(&sd)
 	}
 	return StateOption{def: sd}
+}
+
+// ParallelStateBuilder constructs a parallel (orthogonal-regions) state.
+// Use ParallelState() to create one, then call Region() for each region,
+// and Done() to get the resulting StateOption.
+type ParallelStateBuilder struct {
+	name   string
+	nested []StateOption // accumulated region + leaf StateOptions
+}
+
+// ParallelState starts building a parallel state with the given name.
+func ParallelState(name string) *ParallelStateBuilder {
+	return &ParallelStateBuilder{name: name}
+}
+
+// Region adds a named region to the parallel state. The first state in the
+// states list becomes the region's InitialChild.
+func (p *ParallelStateBuilder) Region(regionName string, states ...StateOption) *ParallelStateBuilder {
+	initialChild := ""
+	if len(states) > 0 {
+		initialChild = states[0].def.Name
+	}
+
+	// Region is a compound state that is a child of the parallel state.
+	regionDef := types.StateDef{
+		Name:         regionName,
+		IsCompound:   true,
+		Parent:       p.name,
+		InitialChild: initialChild,
+	}
+	regionOpt := StateOption{def: regionDef}
+	p.nested = append(p.nested, regionOpt)
+
+	// Each leaf state's parent is the region.
+	for _, st := range states {
+		child := st
+		if child.def.Parent == "" {
+			child.def.Parent = regionName
+		}
+		p.nested = append(p.nested, child)
+	}
+	return p
+}
+
+// Done finalises the parallel state and returns a StateOption suitable for
+// passing to DefBuilder.States(). The returned StateOption carries all region
+// and leaf StateOptions in its nested field so that Build() can flatten them.
+func (p *ParallelStateBuilder) Done() StateOption {
+	parallelDef := types.StateDef{
+		Name:       p.name,
+		IsParallel: true,
+		IsCompound: true,
+	}
+	return StateOption{def: parallelDef, nested: p.nested}
+}
+
+// flattenStates recursively expands StateOptions that carry nested children
+// (parallel states) into a flat slice. The StateOption itself is always emitted
+// first, followed by all nested entries (also flattened).
+func flattenStates(states []StateOption) []StateOption {
+	result := make([]StateOption, 0, len(states))
+	for _, so := range states {
+		// Emit the state itself (without the nested field — already processed).
+		flat := so
+		flat.nested = nil
+		result = append(result, flat)
+		if len(so.nested) > 0 {
+			result = append(result, flattenStates(so.nested)...)
+		}
+	}
+	return result
 }
 
 // ValidateFn is called by Build() to validate the assembled Definition.
@@ -329,8 +411,13 @@ func (b *DefBuilder) Build() (*types.Definition, error) {
 		Transitions:   make(map[string]types.TransitionDef),
 	}
 
+	// Flatten nested StateOptions (from ParallelState builders) into a flat slice
+	// before collecting states. This ensures all region and leaf states from
+	// Region() calls appear in def.States for the Parent→Children wiring step.
+	allStates := flattenStates(b.states)
+
 	// Collect states
-	for _, so := range b.states {
+	for _, so := range allStates {
 		def.States[so.def.Name] = so.def
 		if so.def.IsInitial {
 			def.InitialState = so.def.Name
@@ -381,6 +468,7 @@ func (b *DefBuilder) Build() (*types.Definition, error) {
 			TriggerKey:          tb.triggerKey,
 			AllowSelfTransition: tb.allowSelf,
 			HistoryMode:         tb.historyMode,
+			Priority:            tb.priority,
 		}
 		def.Transitions[tb.name] = td
 	}

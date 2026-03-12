@@ -61,6 +61,7 @@ type StateDef struct {
 	Children      []string // Direct child state names. Populated by Build(). Empty for leaf states.
 	InitialChild  string   // Name of the child state to enter when this compound state is entered.
 	IsCompound    bool     // True if this state has children (set by Build() or explicitly).
+	IsParallel    bool     // True if this is a parallel (orthogonal regions) state. Implies IsCompound.
 	EntryActivity string   // Activity name to execute synchronously when entering this state.
 	ExitActivity  string   // Activity name to execute synchronously when exiting this state.
 }
@@ -97,6 +98,7 @@ type TransitionDef struct {
 	TriggerKey          string
 	AllowSelfTransition bool
 	HistoryMode         HistoryMode
+	Priority            int // Higher value = higher priority. Used for deterministic conflict resolution in parallel states.
 }
 
 // Definition is an immutable, validated workflow definition.

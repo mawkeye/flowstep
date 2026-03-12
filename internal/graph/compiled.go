@@ -98,10 +98,18 @@ func Compile(def *types.Definition, s Sentinels) (*CompiledMachine, error) {
 		cm.DepthMap[name] = len(chain)
 	}
 
+	// Populate RegionIndex for parallel states: maps parallel state → region child names.
+	for name, st := range def.States {
+		if st.IsParallel {
+			cm.RegionIndex[name] = st.Children
+		}
+	}
+
 	// Populate InitialLeafMap for compound states (recursive initial-child resolution).
+	// Parallel states are excluded — they have no single initial leaf.
 	leafMemo := make(map[string]string)
 	for name, st := range def.States {
-		if st.IsCompound && st.InitialChild != "" {
+		if st.IsCompound && !st.IsParallel && st.InitialChild != "" {
 			cm.InitialLeafMap[name] = resolveInitialLeaf(name, def, leafMemo)
 		}
 	}
@@ -222,9 +230,9 @@ func computeHash(def *types.Definition) string {
 		st := def.States[name]
 		children := slices.Clone(st.Children)
 		slices.Sort(children)
-		fmt.Fprintf(h, "state:%s|init:%v|term:%v|wait:%v|parent:%s|children:%v|initialChild:%s|compound:%v|entry:%s|exit:%s\n",
+		fmt.Fprintf(h, "state:%s|init:%v|term:%v|wait:%v|parent:%s|children:%v|initialChild:%s|compound:%v|parallel:%v|entry:%s|exit:%s\n",
 			st.Name, st.IsInitial, st.IsTerminal, st.IsWait,
-			st.Parent, children, st.InitialChild, st.IsCompound,
+			st.Parent, children, st.InitialChild, st.IsCompound, st.IsParallel,
 			st.EntryActivity, st.ExitActivity)
 	}
 
@@ -233,8 +241,8 @@ func computeHash(def *types.Definition) string {
 		tr := def.Transitions[name]
 		srcs := slices.Clone(tr.Sources)
 		slices.Sort(srcs)
-		fmt.Fprintf(h, "tr:%s|srcs:%v|target:%s|event:%s|trigger:%s|key:%s|history:%s\n",
-			tr.Name, srcs, tr.Target, tr.Event, tr.TriggerType, tr.TriggerKey, tr.HistoryMode)
+		fmt.Fprintf(h, "tr:%s|srcs:%v|target:%s|event:%s|trigger:%s|key:%s|history:%s|priority:%d\n",
+			tr.Name, srcs, tr.Target, tr.Event, tr.TriggerType, tr.TriggerKey, tr.HistoryMode, tr.Priority)
 
 		// Activities (sorted by name)
 		actNames := make([]string, len(tr.Activities))

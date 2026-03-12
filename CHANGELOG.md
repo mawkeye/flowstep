@@ -5,6 +5,37 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [v0.11.0] - 2026-03-12
+
+### Added
+- **Parallel states (orthogonal regions)** — multiple independent state machines running simultaneously inside a single workflow instance. When a workflow enters a parallel state, `CurrentState` is set to the parallel state name and each region tracks its own active leaf via `ActiveInParallel`. (Tasks 1-7: Parallel States)
+- `StateDef.IsParallel bool` — marks a state as a parallel (orthogonal) container
+- `TransitionDef.Priority int` — general transition priority; higher value wins in parallel conflict resolution and can be used in any workflow
+- `WorkflowInstance.ActiveInParallel map[string]string` — maps region name → current active leaf within that region
+- `WorkflowInstance.ParallelClock int64` — monotonically incrementing per-instance counter for ordering parallel transitions
+- Builder DSL: `ParallelState(name).Region(regionName, states...).Done()` nested fluent builder; first state in each `Region()` call becomes the region's initial child
+- `Priority(int)` `TransitionOption` re-exported from `flowstep` root package
+- Parallel validation: `ErrParallelStateNoRegions`, `ErrParallelRegionNotCompound`, `ErrNestedParallelState` sentinel errors; `checkParallelStates()` validates region structure and rejects nested parallel states (order-independent detection)
+- `CompiledMachine.RegionIndex map[string][]string` — maps parallel state name → region child names for O(1) lookup at runtime
+- Intra-parallel dispatch: `parallelTransition()` routes transitions within active regions, runs per-region exit/entry activities, and commits one atomic `DomainEvent` with `EventType="ParallelTransition"`
+- Delta-based event payload: `_parallel_regions` (changed regions only) and `_region_sequence_map` (all regions with last `ParallelClock` value)
+- Parallel-exit support: transition sourced from the parallel state name exits all active regions atomically and clears `ActiveInParallel`
+- Scheduler parallel-awareness: `Signal()`, `CompleteTask()`, `ChildCompleted()` check active leaf states via `activeStates()` helper when matching trigger transitions
+- `pgxstore` migration `003_parallel_states.sql` — adds `active_in_parallel` JSONB and `parallel_clock` BIGINT columns
+- `sqlitestore` migration `003_parallel_states.sql` — adds `active_in_parallel` TEXT and `parallel_clock` INTEGER columns
+- Example `07-parallel-states` — text editor with independent bold/italic parallel regions
+
+### Changed
+- `computeHash()` includes `StateDef.IsParallel` and `TransitionDef.Priority` for dedup correctness
+- `checkCompoundStates()` exempts parallel states from `InitialChild` requirement (parallel states activate all children simultaneously)
+- `checkReachability()` enqueues all children of parallel states (not just `InitialChild`)
+- `InitialLeafMap` excludes parallel states (they have no single initial leaf)
+- `Transition()` routes to `parallelTransition()` when `ActiveInParallel` is non-empty
+- `commitTransition()` detects parallel targets and populates `ActiveInParallel`; detects non-parallel targets and clears `ActiveInParallel`
+- `ForceState()` clears `ActiveInParallel`; repopulates it when target is a parallel state
+- `pgxstore` Create/Get/Update/ListStuck handle `active_in_parallel` and `parallel_clock` columns
+- `sqlitestore` Create/Get/Update/ListStuck handle `active_in_parallel` and `parallel_clock` columns
+
 ## [v0.10.0] - 2026-03-11
 
 ### Added

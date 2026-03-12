@@ -146,14 +146,14 @@ func NewInstanceStore(db *sql.DB, errNotFound error) *InstanceStore {
 func (s *InstanceStore) Get(ctx context.Context, aggregateType, aggregateID string) (*types.WorkflowInstance, error) {
 	var inst types.WorkflowInstance
 	var stateData, createdAt, updatedAt string
-	var shallowHistory, deepHistory string
+	var shallowHistory, deepHistory, activeInParallel string
 	var isStuck int
 
 	err := s.db.QueryRowContext(ctx, `
 		SELECT id, workflow_type, workflow_version, aggregate_type, aggregate_id,
 		       current_state, state_data, correlation_id, is_stuck, stuck_reason,
 		       retry_count, created_at, updated_at,
-		       shallow_history, deep_history
+		       shallow_history, deep_history, active_in_parallel, parallel_clock
 		FROM flowstep_instances WHERE aggregate_type = ? AND aggregate_id = ?`,
 		aggregateType, aggregateID,
 	).Scan(
@@ -162,7 +162,7 @@ func (s *InstanceStore) Get(ctx context.Context, aggregateType, aggregateID stri
 		&inst.CurrentState, &stateData, &inst.CorrelationID,
 		&isStuck, &inst.StuckReason, &inst.RetryCount,
 		&createdAt, &updatedAt,
-		&shallowHistory, &deepHistory,
+		&shallowHistory, &deepHistory, &activeInParallel, &inst.ParallelClock,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -176,8 +176,10 @@ func (s *InstanceStore) Get(ctx context.Context, aggregateType, aggregateID stri
 	inst.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updatedAt)
 	inst.ShallowHistory = make(map[string]string)
 	inst.DeepHistory = make(map[string]string)
+	inst.ActiveInParallel = make(map[string]string)
 	_ = json.Unmarshal([]byte(shallowHistory), &inst.ShallowHistory)
 	_ = json.Unmarshal([]byte(deepHistory), &inst.DeepHistory)
+	_ = json.Unmarshal([]byte(activeInParallel), &inst.ActiveInParallel)
 	return &inst, nil
 }
 
@@ -186,6 +188,7 @@ func (s *InstanceStore) Create(ctx context.Context, tx any, instance types.Workf
 	stateData, _ := json.Marshal(instance.StateData)
 	shallowHistory, _ := json.Marshal(instance.ShallowHistory)
 	deepHistory, _ := json.Marshal(instance.DeepHistory)
+	activeInParallel, _ := json.Marshal(instance.ActiveInParallel)
 	isStuck := 0
 	if instance.IsStuck {
 		isStuck = 1
@@ -196,8 +199,8 @@ func (s *InstanceStore) Create(ctx context.Context, tx any, instance types.Workf
 			(id, workflow_type, workflow_version, aggregate_type, aggregate_id,
 			 current_state, state_data, correlation_id, is_stuck, stuck_reason,
 			 retry_count, created_at, updated_at,
-			 shallow_history, deep_history)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			 shallow_history, deep_history, active_in_parallel, parallel_clock)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		instance.ID, instance.WorkflowType, instance.WorkflowVersion,
 		instance.AggregateType, instance.AggregateID,
 		instance.CurrentState, string(stateData), instance.CorrelationID,
@@ -205,6 +208,7 @@ func (s *InstanceStore) Create(ctx context.Context, tx any, instance types.Workf
 		instance.CreatedAt.Format(time.RFC3339Nano),
 		instance.UpdatedAt.Format(time.RFC3339Nano),
 		string(shallowHistory), string(deepHistory),
+		string(activeInParallel), instance.ParallelClock,
 	)
 	if err != nil {
 		return fmt.Errorf("sqlitestore: create instance: %w", err)
@@ -217,6 +221,7 @@ func (s *InstanceStore) Update(ctx context.Context, tx any, instance types.Workf
 	stateData, _ := json.Marshal(instance.StateData)
 	shallowHistory, _ := json.Marshal(instance.ShallowHistory)
 	deepHistory, _ := json.Marshal(instance.DeepHistory)
+	activeInParallel, _ := json.Marshal(instance.ActiveInParallel)
 	isStuck := 0
 	if instance.IsStuck {
 		isStuck = 1
@@ -226,11 +231,13 @@ func (s *InstanceStore) Update(ctx context.Context, tx any, instance types.Workf
 		UPDATE flowstep_instances
 		SET current_state = ?, state_data = ?, is_stuck = ?, stuck_reason = ?,
 		    retry_count = ?, updated_at = ?,
-		    shallow_history = ?, deep_history = ?
+		    shallow_history = ?, deep_history = ?,
+		    active_in_parallel = ?, parallel_clock = ?
 		WHERE aggregate_type = ? AND aggregate_id = ? AND updated_at = ?`,
 		instance.CurrentState, string(stateData), isStuck, instance.StuckReason,
 		instance.RetryCount, instance.UpdatedAt.Format(time.RFC3339Nano),
 		string(shallowHistory), string(deepHistory),
+		string(activeInParallel), instance.ParallelClock,
 		instance.AggregateType, instance.AggregateID,
 		instance.LastReadUpdatedAt.Format(time.RFC3339Nano),
 	)
@@ -248,7 +255,7 @@ func (s *InstanceStore) ListStuck(ctx context.Context) ([]types.WorkflowInstance
 		SELECT id, workflow_type, workflow_version, aggregate_type, aggregate_id,
 		       current_state, state_data, correlation_id, is_stuck, stuck_reason,
 		       retry_count, created_at, updated_at,
-		       shallow_history, deep_history
+		       shallow_history, deep_history, active_in_parallel, parallel_clock
 		FROM flowstep_instances WHERE is_stuck = 1 ORDER BY updated_at`)
 	if err != nil {
 		return nil, fmt.Errorf("sqlitestore: query stuck: %w", err)
@@ -259,7 +266,7 @@ func (s *InstanceStore) ListStuck(ctx context.Context) ([]types.WorkflowInstance
 	for rows.Next() {
 		var inst types.WorkflowInstance
 		var stateData, createdAt, updatedAt string
-		var shallowHistory, deepHistory string
+		var shallowHistory, deepHistory, activeInParallel string
 		var isStuck int
 		err := rows.Scan(
 			&inst.ID, &inst.WorkflowType, &inst.WorkflowVersion,
@@ -267,7 +274,7 @@ func (s *InstanceStore) ListStuck(ctx context.Context) ([]types.WorkflowInstance
 			&inst.CurrentState, &stateData, &inst.CorrelationID,
 			&isStuck, &inst.StuckReason, &inst.RetryCount,
 			&createdAt, &updatedAt,
-			&shallowHistory, &deepHistory,
+			&shallowHistory, &deepHistory, &activeInParallel, &inst.ParallelClock,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("sqlitestore: scan instance: %w", err)
@@ -278,8 +285,10 @@ func (s *InstanceStore) ListStuck(ctx context.Context) ([]types.WorkflowInstance
 		inst.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updatedAt)
 		inst.ShallowHistory = make(map[string]string)
 		inst.DeepHistory = make(map[string]string)
+		inst.ActiveInParallel = make(map[string]string)
 		_ = json.Unmarshal([]byte(shallowHistory), &inst.ShallowHistory)
 		_ = json.Unmarshal([]byte(deepHistory), &inst.DeepHistory)
+		_ = json.Unmarshal([]byte(activeInParallel), &inst.ActiveInParallel)
 		instances = append(instances, inst)
 	}
 	return instances, rows.Err()

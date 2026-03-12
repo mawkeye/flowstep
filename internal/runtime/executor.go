@@ -87,6 +87,11 @@ func (e *Engine) Transition(
 		return nil, err
 	}
 
+	// Parallel state: delegate to dedicated parallel dispatch logic.
+	if len(instance.ActiveInParallel) > 0 {
+		return e.parallelTransition(ctx, cm, instance, transitionName, actorID, params, start)
+	}
+
 	ct, targetState, err := e.validateTransition(ctx, cm, instance, transitionName, params)
 	if err != nil {
 		return nil, err
@@ -259,9 +264,16 @@ func (e *Engine) commitTransition(
 	}
 
 	// 3. Compute exit/entry sequences.
+	// Parallel entry: if resolvedTarget is a parallel state, use a special entry sequence
+	// that includes the parallel state, each region, and each region's initial leaf.
 	lca, _ := cm.LCA(sourceLeaf, resolvedTarget)
 	exitSeq := computeExitSequence(sourceLeaf, lca, cm.Ancestry)
-	entrySeq := computeEntrySequence(lca, resolvedTarget, cm.Ancestry)
+	var entrySeq []string
+	if _, isParallel := cm.RegionIndex[resolvedTarget]; isParallel {
+		entrySeq = computeParallelEntrySequence(cm, lca, resolvedTarget)
+	} else {
+		entrySeq = computeEntrySequence(lca, resolvedTarget, cm.Ancestry)
+	}
 
 	// 3b. Record history for all compound states in the exit sequence.
 	// Must happen after exitSeq is computed, before tx.Begin, so that a tx rollback
@@ -356,6 +368,14 @@ func (e *Engine) commitTransition(
 		instance.StuckReason = stuckReason
 	} else {
 		instance.CurrentState = resolvedTarget
+		// If entering a parallel state, populate ActiveInParallel with each region's initial leaf.
+		if _, isParallel := cm.RegionIndex[resolvedTarget]; isParallel {
+			enterParallelRegions(instance, cm, resolvedTarget)
+		} else {
+			// Leaving any parallel context (non-parallel target from parallel source is handled
+			// by parallelTransition, but defensively clear here too).
+			instance.ActiveInParallel = nil
+		}
 	}
 	instance.UpdatedAt = now
 
@@ -451,6 +471,7 @@ func (e *Engine) ForceState(ctx context.Context, aggregateType, aggregateID, tar
 	}
 
 	// Resolve compound target to its initial leaf.
+	// Parallel states are NOT in InitialLeafMap, so they are not resolved here.
 	if leaf, ok := cm.InitialLeafMap[targetState]; ok {
 		targetState = leaf
 	}
@@ -481,6 +502,11 @@ func (e *Engine) ForceState(ctx context.Context, aggregateType, aggregateID, tar
 	instance.StuckReason = ""
 	instance.ShallowHistory = make(map[string]string)
 	instance.DeepHistory = make(map[string]string)
+	// Clear parallel context; re-populate if target is itself a parallel state.
+	instance.ActiveInParallel = nil
+	if _, isParallel := cm.RegionIndex[targetState]; isParallel {
+		enterParallelRegions(instance, cm, targetState)
+	}
 	instance.UpdatedAt = now
 
 	// Transaction: persist

@@ -50,6 +50,9 @@ var (
 	ErrCompoundStateNoInitialChild = errors.New("flowstep: compound state has no InitialChild")
 	ErrOrphanedChild               = errors.New("flowstep: state references non-existent parent")
 	ErrCircularHierarchy           = errors.New("flowstep: circular parent-child hierarchy detected")
+	ErrParallelStateNoRegions      = errors.New("flowstep: parallel state has no regions (children)")
+	ErrParallelRegionNotCompound   = errors.New("flowstep: parallel state child is not a compound state (region)")
+	ErrNestedParallelState         = errors.New("flowstep: nested parallel states are not supported")
 )
 
 // Activity errors.

@@ -824,6 +824,166 @@ func TestCompile_DefinitionHash_DiffersOnEntryExitActivity(t *testing.T) {
 	}
 }
 
+// parallelDef returns a minimal compiled parallel workflow definition (pre-wired).
+func parallelCompileDef() *types.Definition {
+	return &types.Definition{
+		AggregateType: "editor",
+		WorkflowType:  "editor-wf",
+		Version:       1,
+		States: map[string]types.StateDef{
+			"IDLE":          {Name: "IDLE", IsInitial: true},
+			"editing":       {Name: "editing", IsParallel: true, IsCompound: true, Children: []string{"bold_region", "italic_region"}},
+			"bold_region":   {Name: "bold_region", IsCompound: true, Parent: "editing", InitialChild: "bold_off", Children: []string{"bold_off", "bold_on"}},
+			"bold_off":      {Name: "bold_off", Parent: "bold_region"},
+			"bold_on":       {Name: "bold_on", Parent: "bold_region"},
+			"italic_region": {Name: "italic_region", IsCompound: true, Parent: "editing", InitialChild: "italic_off", Children: []string{"italic_off", "italic_on"}},
+			"italic_off":    {Name: "italic_off", Parent: "italic_region"},
+			"italic_on":     {Name: "italic_on", Parent: "italic_region"},
+			"DONE":          {Name: "DONE", IsTerminal: true},
+		},
+		Transitions: map[string]types.TransitionDef{
+			"start":  {Name: "start", Sources: []string{"IDLE"}, Target: "editing", TriggerType: types.TriggerDirect},
+			"finish": {Name: "finish", Sources: []string{"editing"}, Target: "DONE", TriggerType: types.TriggerDirect},
+			"toggleBold":     {Name: "toggleBold", Sources: []string{"bold_off"}, Target: "bold_on", TriggerType: types.TriggerDirect},
+			"untoggleBold":   {Name: "untoggleBold", Sources: []string{"bold_on"}, Target: "bold_off", TriggerType: types.TriggerDirect},
+			"toggleItalic":   {Name: "toggleItalic", Sources: []string{"italic_off"}, Target: "italic_on", TriggerType: types.TriggerDirect},
+			"untoggleItalic": {Name: "untoggleItalic", Sources: []string{"italic_on"}, Target: "italic_off", TriggerType: types.TriggerDirect},
+		},
+		InitialState:   "IDLE",
+		TerminalStates: []string{"DONE"},
+	}
+}
+
+// TestCompile_Parallel_RegionIndex verifies that Compile() populates RegionIndex
+// mapping parallel state name → its region child names.
+func TestCompile_Parallel_RegionIndex(t *testing.T) {
+	def := parallelCompileDef()
+	cm, err := Compile(def, Sentinels{})
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+
+	regions, ok := cm.RegionIndex["editing"]
+	if !ok {
+		t.Fatal("RegionIndex missing 'editing' parallel state")
+	}
+	wantRegions := []string{"bold_region", "italic_region"}
+	for _, want := range wantRegions {
+		found := false
+		for _, got := range regions {
+			if got == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("RegionIndex[editing] missing region %q, got %v", want, regions)
+		}
+	}
+	if len(regions) != len(wantRegions) {
+		t.Errorf("RegionIndex[editing] len = %d, want %d", len(regions), len(wantRegions))
+	}
+}
+
+// TestCompile_Parallel_ParallelNotInInitialLeafMap verifies that parallel states
+// are NOT in InitialLeafMap (they have no single initial leaf).
+func TestCompile_Parallel_ParallelNotInInitialLeafMap(t *testing.T) {
+	def := parallelCompileDef()
+	cm, err := Compile(def, Sentinels{})
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+
+	if _, ok := cm.InitialLeafMap["editing"]; ok {
+		t.Error("parallel state 'editing' should NOT be in InitialLeafMap")
+	}
+}
+
+// TestCompile_Parallel_RegionsInInitialLeafMap verifies that each region (a compound state)
+// IS in InitialLeafMap and maps to its initial leaf.
+func TestCompile_Parallel_RegionsInInitialLeafMap(t *testing.T) {
+	def := parallelCompileDef()
+	cm, err := Compile(def, Sentinels{})
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+
+	cases := map[string]string{
+		"bold_region":   "bold_off",
+		"italic_region": "italic_off",
+	}
+	for region, wantLeaf := range cases {
+		leaf, ok := cm.InitialLeafMap[region]
+		if !ok {
+			t.Errorf("InitialLeafMap missing region %q", region)
+			continue
+		}
+		if leaf != wantLeaf {
+			t.Errorf("InitialLeafMap[%q] = %q, want %q", region, leaf, wantLeaf)
+		}
+	}
+}
+
+// TestCompile_DefinitionHash_DiffersOnPriority verifies that computeHash includes
+// TransitionDef.Priority so that two definitions identical except for Priority
+// produce different hashes.
+func TestCompile_DefinitionHash_DiffersOnPriority(t *testing.T) {
+	base := types.TransitionDef{Name: "go", Sources: []string{"A"}, Target: "B"}
+	withPriority := base
+	withPriority.Priority = 5
+
+	def1 := &types.Definition{
+		AggregateType: "order", WorkflowType: "wf", Version: 1,
+		States:         map[string]types.StateDef{"A": {Name: "A", IsInitial: true}, "B": {Name: "B", IsTerminal: true}},
+		Transitions:    map[string]types.TransitionDef{"go": base},
+		InitialState:   "A",
+		TerminalStates: []string{"B"},
+	}
+	def2 := &types.Definition{
+		AggregateType: "order", WorkflowType: "wf", Version: 1,
+		States:         map[string]types.StateDef{"A": {Name: "A", IsInitial: true}, "B": {Name: "B", IsTerminal: true}},
+		Transitions:    map[string]types.TransitionDef{"go": withPriority},
+		InitialState:   "A",
+		TerminalStates: []string{"B"},
+	}
+	cm1, _ := Compile(def1, Sentinels{})
+	cm2, _ := Compile(def2, Sentinels{})
+	if cm1.DefinitionHash == cm2.DefinitionHash {
+		t.Error("definitions differing only in Priority should produce different hashes")
+	}
+}
+
+// TestCompile_DefinitionHash_DiffersOnIsParallel verifies that computeHash includes
+// StateDef.IsParallel so that two definitions identical except for IsParallel
+// produce different hashes.
+func TestCompile_DefinitionHash_DiffersOnIsParallel(t *testing.T) {
+	def1 := &types.Definition{
+		AggregateType: "order", WorkflowType: "wf", Version: 1,
+		States: map[string]types.StateDef{
+			"A": {Name: "A", IsInitial: true},
+			"B": {Name: "B", IsTerminal: true},
+		},
+		Transitions:    map[string]types.TransitionDef{"go": {Name: "go", Sources: []string{"A"}, Target: "B"}},
+		InitialState:   "A",
+		TerminalStates: []string{"B"},
+	}
+	def2 := &types.Definition{
+		AggregateType: "order", WorkflowType: "wf", Version: 1,
+		States: map[string]types.StateDef{
+			"A": {Name: "A", IsInitial: true, IsParallel: true},
+			"B": {Name: "B", IsTerminal: true},
+		},
+		Transitions:    map[string]types.TransitionDef{"go": {Name: "go", Sources: []string{"A"}, Target: "B"}},
+		InitialState:   "A",
+		TerminalStates: []string{"B"},
+	}
+	cm1, _ := Compile(def1, Sentinels{})
+	cm2, _ := Compile(def2, Sentinels{})
+	if cm1.DefinitionHash == cm2.DefinitionHash {
+		t.Error("definitions differing only in IsParallel should produce different hashes")
+	}
+}
+
 // TestCompile_DefinitionHash_DiffersOnHistoryMode verifies that computeHash includes
 // TransitionDef.HistoryMode so that two definitions identical except for HistoryMode
 // produce different hashes (preventing incorrect deduplication in Register).

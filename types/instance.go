@@ -24,6 +24,13 @@ type WorkflowInstance struct {
 	// DeepHistory records the last leaf descendant visited for each compound state.
 	// Key: compound state name. Value: last leaf state name.
 	DeepHistory map[string]string
+	// ActiveInParallel tracks the active leaf state for each region of a parallel state.
+	// Key: region name. Value: active leaf state name within that region.
+	// Non-nil only when the workflow is currently inside a parallel state.
+	ActiveInParallel map[string]string
+	// ParallelClock is a per-instance logical counter incremented on each parallel transition.
+	// Used to build the RegionSequenceMap in DomainEvent.Payload.
+	ParallelClock int64
 	// LastReadUpdatedAt is set by the engine before modifying UpdatedAt.
 	// Store adapters use it as the expected current updated_at in their
 	// optimistic locking WHERE clause. Not persisted (json:"-").

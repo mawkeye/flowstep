@@ -170,6 +170,68 @@ func recordHistory(instance *types.WorkflowInstance, sourceLeaf string, exitSeq 
 	}
 }
 
+// enterParallelRegions populates instance.ActiveInParallel with each region's initial leaf.
+// Uses copy-on-write to avoid aliasing stored maps.
+func enterParallelRegions(instance *types.WorkflowInstance, cm *graph.CompiledMachine, parallelState string) {
+	regions := cm.RegionIndex[parallelState]
+	newAIP := make(map[string]string, len(regions))
+	for _, region := range regions {
+		leaf := region
+		if initialLeaf, ok := cm.InitialLeafMap[region]; ok {
+			leaf = initialLeaf
+		}
+		newAIP[region] = leaf
+	}
+	instance.ActiveInParallel = newAIP
+}
+
+// computeParallelEntrySequence returns the full entry sequence for entering a parallel state:
+// [parallelState, region1, region1_initialLeaf, region2, region2_initialLeaf, ...]
+// The LCA and ancestor path to parallelState is computed by the caller and prepended if needed.
+func computeParallelEntrySequence(cm *graph.CompiledMachine, lca, parallelState string) []string {
+	// Entry path to reach the parallel state itself (from LCA).
+	parentSeq := computeEntrySequence(lca, parallelState, cm.Ancestry)
+
+	// For each region: region → its initial leaf.
+	regions := cm.RegionIndex[parallelState]
+	extra := make([]string, 0, len(regions)*2)
+	for _, region := range regions {
+		extra = append(extra, region)
+		if leaf, ok := cm.InitialLeafMap[region]; ok {
+			extra = append(extra, leaf)
+		}
+	}
+	return append(parentSeq, extra...)
+}
+
+// computeParallelExitSequence returns the exit sequence when leaving a parallel state.
+// For each active leaf in ActiveInParallel: exit leaf → region → (stop before parallelState).
+// Then exits the parallelState itself.
+func computeParallelExitSequence(instance *types.WorkflowInstance, parallelState string) []string {
+	var seq []string
+	// Exit each region's active leaf and the region itself.
+	for region, leaf := range instance.ActiveInParallel {
+		seq = append(seq, leaf)
+		if leaf != region {
+			seq = append(seq, region)
+		}
+	}
+	// Exit the parallel state itself.
+	seq = append(seq, parallelState)
+	return seq
+}
+
+// activeStates returns all states that should be checked when matching trigger transitions.
+// In a normal state this is just [instance.CurrentState].
+// In a parallel state it is [instance.CurrentState] plus all active leaf states.
+func activeStates(instance *types.WorkflowInstance) []string {
+	states := []string{instance.CurrentState}
+	for _, leaf := range instance.ActiveInParallel {
+		states = append(states, leaf)
+	}
+	return states
+}
+
 func copyMap(m map[string]any) map[string]any {
 	if m == nil {
 		return nil

@@ -56,8 +56,14 @@ var (
 	EntryActivityOpt = builder.EntryActivityOpt
 	ExitActivityOpt  = builder.ExitActivityOpt
 
+	// Parallel builder function
+	ParallelState = builder.ParallelState
+
 	// WithHistory marks a transition as history-aware (shallow or deep).
 	WithHistory = builder.WithHistory
+
+	// Priority sets the priority for a transition. Higher value wins in parallel conflict resolution.
+	Priority = builder.Priority
 )
 
 // Define starts building a workflow definition.
@@ -75,6 +81,9 @@ func Define(aggregateType, workflowType string) *builder.DefBuilder {
 			ErrCompoundStateNoInitialChild: ErrCompoundStateNoInitialChild,
 			ErrOrphanedChild:               ErrOrphanedChild,
 			ErrCircularHierarchy:           ErrCircularHierarchy,
+			ErrParallelStateNoRegions:      ErrParallelStateNoRegions,
+			ErrParallelRegionNotCompound:   ErrParallelRegionNotCompound,
+			ErrNestedParallelState:         ErrNestedParallelState,
 		})
 	}
 	return builder.New(aggregateType, workflowType, validateFn, ErrDuplicateTransition)

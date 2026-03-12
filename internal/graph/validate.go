@@ -43,6 +43,9 @@ func Validate(def *types.Definition, sentinels Sentinels) error {
 	if err := checkCompoundStates(def, sentinels); err != nil {
 		return err
 	}
+	if err := checkParallelStates(def, sentinels); err != nil {
+		return err
+	}
 	if err := checkCompoundNotTerminal(def, sentinels); err != nil {
 		return err
 	}
@@ -77,11 +80,62 @@ func checkOrphanedChildren(def *types.Definition, s Sentinels) error {
 	return nil
 }
 
+// checkParallelStates verifies that parallel states have valid structure:
+// at least one region child, all children are compound states (regions),
+// and no child is itself a parallel state (no nested parallels).
+func checkParallelStates(def *types.Definition, s Sentinels) error {
+	for name, st := range def.States {
+		if !st.IsParallel {
+			continue
+		}
+		// A parallel state must not itself be a child of another parallel state.
+		// This check uses the Parent field so it fires regardless of map iteration order.
+		if st.Parent != "" {
+			if parent, ok := def.States[st.Parent]; ok && parent.IsParallel {
+				return &ValidationError{
+					Sentinel: s.ErrNestedParallelState,
+					Detail:   fmt.Sprintf("flowstep: parallel state %q is nested inside parallel state %q (not supported)", name, st.Parent),
+				}
+			}
+		}
+		if len(st.Children) == 0 {
+			return &ValidationError{
+				Sentinel: s.ErrParallelStateNoRegions,
+				Detail:   fmt.Sprintf("flowstep: parallel state %q has no regions (children)", name),
+			}
+		}
+		for _, childName := range st.Children {
+			child, ok := def.States[childName]
+			if !ok {
+				continue // orphan check catches this
+			}
+			if child.IsParallel {
+				return &ValidationError{
+					Sentinel: s.ErrNestedParallelState,
+					Detail:   fmt.Sprintf("flowstep: parallel state %q has nested parallel child %q (not supported)", name, childName),
+				}
+			}
+			if !child.IsCompound {
+				return &ValidationError{
+					Sentinel: s.ErrParallelRegionNotCompound,
+					Detail:   fmt.Sprintf("flowstep: parallel state %q child %q is not a compound state (region)", name, childName),
+				}
+			}
+		}
+	}
+	return nil
+}
+
 // checkCompoundStates verifies that compound states have a non-empty InitialChild
 // and that InitialChild is one of their children.
+// Parallel states are exempt — they activate all children and have no InitialChild.
 func checkCompoundStates(def *types.Definition, s Sentinels) error {
 	for name, st := range def.States {
 		if !st.IsCompound {
+			continue
+		}
+		// Parallel states are compound but do not use InitialChild.
+		if st.IsParallel {
 			continue
 		}
 		if st.InitialChild == "" {
@@ -159,6 +213,11 @@ type Sentinels struct {
 	ErrCompoundStateNoInitialChild error
 	ErrOrphanedChild               error
 	ErrCircularHierarchy           error
+
+	// Parallel sentinels
+	ErrParallelStateNoRegions    error
+	ErrParallelRegionNotCompound error
+	ErrNestedParallelState       error
 }
 
 func checkInitialState(def *types.Definition, s Sentinels) error {
@@ -247,9 +306,16 @@ func checkReachability(def *types.Definition, s Sentinels) error {
 		}
 		reachable[name] = true
 		queue = append(queue, name)
-		// Entering a compound state immediately reaches its InitialChild.
-		if st, ok := def.States[name]; ok && st.IsCompound && st.InitialChild != "" {
-			enqueue(st.InitialChild)
+		if st, ok := def.States[name]; ok && st.IsCompound {
+			if st.IsParallel {
+				// Parallel states activate ALL children (regions), not just InitialChild.
+				for _, child := range st.Children {
+					enqueue(child)
+				}
+			} else if st.InitialChild != "" {
+				// Regular compound state: entering reaches its InitialChild.
+				enqueue(st.InitialChild)
+			}
 		}
 	}
 
